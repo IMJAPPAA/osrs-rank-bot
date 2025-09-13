@@ -1,3 +1,62 @@
+async def map_wise_to_schema(wise_json: dict):
+    """
+    Map Wise Old Man JSON naar het schema dat calculate_points() verwacht.
+    Default values worden gebruikt als data ontbreekt.
+    """
+    data = {
+        "bosses": {},
+        "diaries": {"easy":0,"medium":0,"hard":0,"elite":0,"all_completed":False},
+        "achievements": {"quest_cape":False, "music_cape":False, "diary_cape":False, "max_cape":False},
+        "skills": {"first_99":False, "extra_99s":0, "total_level":0},
+        "pets": {"skilling":0, "boss":0, "raids":0},
+        "events": {"pvm_participations":0, "event_wins":0},
+        "donations": 0,
+        "first_time_kills": 0
+    }
+
+    # --- Skills & total level ---
+    levels = wise_json.get("levels") or wise_json.get("experience") or {}
+    data["skills"]["total_level"] = int(levels.get("overall", {}).get("level", 0) or 0)
+
+    # Eerste 99 en extra 99's
+    ninetynines = 0
+    if isinstance(levels, dict):
+        for v in levels.values():
+            lvl = v.get("level") if isinstance(v, dict) else 0
+            if lvl >= 99:
+                ninetynines += 1
+    data["skills"]["first_99"] = ninetynines >= 1
+    data["skills"]["extra_99s"] = max(0, ninetynines - 1)
+
+    # Bosses
+    bosses_source = wise_json.get("bosses") or wise_json.get("bossRecords") or {}
+    for key in ["barrows", "zulrah", "vorkath", "gwd", "wildy", "jad", "zuk", "cox", "tob", "toa"]:
+        value = bosses_source.get(key, 0)
+        data["bosses"][key] = int(value or 0)
+
+    # Diaries
+    diaries = wise_json.get("diaries") or {}
+    data["diaries"]["easy"] = int(diaries.get("easy", 0) or 0)
+    data["diaries"]["medium"] = int(diaries.get("medium", 0) or 0)
+    data["diaries"]["hard"] = int(diaries.get("hard", 0) or 0)
+    data["diaries"]["elite"] = int(diaries.get("elite", 0) or 0)
+    data["diaries"]["all_completed"] = diaries.get("completed", False) or diaries.get("all", False)
+
+    # Achievements / capes
+    achievements = wise_json.get("titles") or wise_json.get("achievements") or {}
+    data["achievements"]["quest_cape"] = bool(wise_json.get("hasQuestCape") or achievements.get("questCape"))
+    data["achievements"]["music_cape"] = bool(wise_json.get("hasMusicCape") or achievements.get("musicCape"))
+    data["achievements"]["diary_cape"] = bool(achievements.get("diaryCape") or wise_json.get("hasDiaryCape"))
+    data["achievements"]["max_cape"] = bool(achievements.get("maxCape") or wise_json.get("isMaxed"))
+
+    # Pets
+    pets = wise_json.get("pets") or {}
+    data["pets"]["skilling"] = int(pets.get("skilling", 0) or 0)
+    data["pets"]["boss"] = int(pets.get("boss", 0) or 0)
+    data["pets"]["raids"] = int(pets.get("raids", 0) or 0)
+
+    return data
+
 # ===== Dummy audioop module =====
 import sys
 import types
