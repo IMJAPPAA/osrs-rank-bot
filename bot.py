@@ -251,14 +251,24 @@ async def points(interaction: discord.Interaction, member: discord.Member = None
 async def on_ready():
     await database.init_db()
 
-    # Direct sync per guild, zodat commands meteen zichtbaar zijn
     for guild in bot.guilds:
+        # Haal alle commands op die in deze guild geregistreerd zijn
+        existing_commands = await tree.fetch_commands(guild=guild)
+
+        # Verwijder oude /addpoints command
+        for cmd in existing_commands:
+            if cmd.name == "addpoints":
+                await tree.delete_command(cmd.id, guild=guild)
+                print(f"Deleted old command {cmd.name} in {guild.name}")
+
+        # Sync nieuwe commands
         await tree.sync(guild=guild)
         created = await ensure_roles_exist(guild)
         if created:
             print(f"Created roles in {guild.name}: {created}")
 
     print(f"✅ Bot is online as {bot.user} and commands are synced")
+
 
 # ===== Start Bot =====
 if not DISCORD_TOKEN:
