@@ -1,25 +1,62 @@
-async def ensure_roles_exist(guild: discord.Guild):
-    """Ensure ladder ranks + prestige roles exist; create them if missing (no icons)."""
-    existing = {r.name: r for r in guild.roles}
-    created = []
-    # Ladder roles
-    for _, name in RANKS:
-        if name not in existing:
-            role = await guild.create_role(name=name)
-            created.append(role.name)
-    # Prestige roles
-    for pname in PRESTIGE_ROLES:
-        if pname not in existing:
-            role = await guild.create_role(name=pname)
-            created.append(role.name)
-    return created
+# ===== Dummy audioop module =====
+import sys
+import types
+sys.modules['audioop'] = types.ModuleType('audioop')
 
+# ===== Imports =====
+import os
+import asyncio
+import requests
+import discord
+from discord.ext import commands
+from discord import app_commands
+import database  # zorg dat je deze hebt
+from pointsystem import calculate_points  # zorg dat je deze hebt
+
+# ===== Config =====
+DISCORD_TOKEN = os.getenv("DISCORD_TOKEN")
+WISE_API = "https://api.wiseoldman.net/v2/players/"
+
+# Ladder ranks & prestige roles
+RANKS = [
+    (0, "Bronze"),
+    (1000, "Iron"),
+    (2500, "Rune"),
+    (5000, "Dragon"),
+    (10000, "Grandmaster"),
+    (20000, "Legend"),
+]
+
+PRESTIGE_ROLES = [
+    "Barrows/Enforcer", "Skillcape", "TzTok", "Quester", "Musician", "Elite",
+    "126", "Achiever", "Champion", "Quiver", "TzKal", "Cape Haver", "Master",
+    "Braindead", "Leaguer", "Maxed", "Clogger", "Kitted", "Pet Hunter", "Last Event Winner"
+]
+
+# ===== Bot & Slash Command Tree =====
+intents = discord.Intents.all()  # All intents, zorg dat dit ook in Dev Portal aangevinkt is
+bot = commands.Bot(command_prefix="!", intents=intents)
+tree = bot.tree
+
+# ===== Helper Functions =====
+def get_rank(points):
+    rank = "Unranked"
+    for threshold, name in RANKS:
+        if points >= threshold:
+            rank = name
+    return rank
+
+async def fetch_wise_player(rsn: str):
+    try:
+        loop = asyncio.get_running_loop()
+        resp = await loop.run_in_executor(None, lambda: requests.get(WISE_API + rsn, timeout=10))
+        if resp.status_code != 200:
+            return None
+        return resp.json()
+    except Exception:
+        return None
 
 async def map_wise_to_schema(wise_json: dict):
-    """
-    Map Wise Old Man JSON naar het schema dat calculate_points() verwacht.
-    Default values worden gebruikt als data ontbreekt.
-    """
     data = {
         "bosses": {},
         "diaries": {"easy":0,"medium":0,"hard":0,"elite":0,"all_completed":False},
@@ -35,7 +72,6 @@ async def map_wise_to_schema(wise_json: dict):
     levels = wise_json.get("levels") or wise_json.get("experience") or {}
     data["skills"]["total_level"] = int(levels.get("overall", {}).get("level", 0) or 0)
 
-    # Eerste 99 en extra 99's
     ninetynines = 0
     if isinstance(levels, dict):
         for v in levels.values():
@@ -74,65 +110,31 @@ async def map_wise_to_schema(wise_json: dict):
 
     return data
 
-# ===== Dummy audioop module =====
-import sys
-import types
-sys.modules['audioop'] = types.ModuleType('audioop')
+async def ensure_roles_exist(guild: discord.Guild):
+    existing = {r.name: r for r in guild.roles}
+    created = []
+    for _, name in RANKS:
+        if name not in existing:
+            role = await guild.create_role(name=name)
+            created.append(role.name)
+    for pname in PRESTIGE_ROLES:
+        if pname not in existing:
+            role = await guild.create_role(name=pname)
+            created.append(role.name)
+    return created
 
-# ===== Imports =====
-import os
-import asyncio
-import requests
-import discord
-from discord.ext import commands
-from discord import app_commands
-import database
-from pointsystem import calculate_points
-
-# ===== Config =====
-DISCORD_TOKEN = os.getenv("DISCORD_TOKEN")
-WISE_API = "https://api.wiseoldman.net/v2/players/"
-
-# Ladder ranks & prestige roles
-RANKS = [
-    (0, "Bronze"),
-    (1000, "Iron"),
-    (2500, "Rune"),
-    (5000, "Dragon"),
-    (10000, "Grandmaster"),
-    (20000, "Legend"),
-]
-
-PRESTIGE_ROLES = [
-    "Barrows/Enforcer", "Skillcape", "TzTok", "Quester", "Musician", "Elite",
-    "126", "Achiever", "Champion", "Quiver", "TzKal", "Cape Haver", "Master",
-    "Braindead", "Leaguer", "Maxed", "Clogger", "Kitted", "Pet Hunter", "Last Event Winner"
-]
-
-# ===== Bot & Slash Command Tree =====
-intents = discord.Intents.all()
-bot = commands.Bot(command_prefix="!", intents=intents)
-tree = bot.tree
-
-# ===== Helper Functions =====
-def get_rank(points):
-    rank = "Unranked"
-    for threshold, name in RANKS:
-        if points >= threshold:
-            rank = name
-    return rank
-
-async def fetch_wise_player(rsn: str):
-    try:
-        loop = asyncio.get_running_loop()
-        resp = await loop.run_in_executor(None, lambda: requests.get(WISE_API + rsn, timeout=10))
-        if resp.status_code != 200:
-            return None
-        return resp.json()
-    except Exception:
-        return None
-
-# (map_wise_to_schema en role functions behouden zoals in jouw code)
+async def assign_roles(member: discord.Member, ladder_rank_name: str, prestige_list):
+    ladder_names = [r[1] for r in RANKS]
+    to_remove = [r for r in member.roles if r.name in ladder_names]
+    if to_remove:
+        await member.remove_roles(*to_remove)
+    guild_role = discord.utils.get(member.guild.roles, name=ladder_rank_name)
+    if guild_role:
+        await member.add_roles(guild_role)
+    for p in prestige_list:
+        role = discord.utils.get(member.guild.roles, name=p)
+        if role and role not in member.roles:
+            await member.add_roles(role)
 
 # ===== Slash Commands =====
 @tree.command(name="link", description="Link your OSRS account")
@@ -149,7 +151,6 @@ async def update(interaction: discord.Interaction, rsn: str = None):
     target_rsn = rsn if rsn else stored[0]
 
     await interaction.response.send_message("🔄 Fetching player data...")
-
     wise_json = await fetch_wise_player(target_rsn)
     if not wise_json:
         return await interaction.followup.send("❌ Could not fetch player data from Wise Old Man API. Make sure the RSN is correct.")
@@ -193,7 +194,9 @@ async def update(interaction: discord.Interaction, rsn: str = None):
     await ensure_roles_exist(interaction.guild)
     await assign_roles(interaction.user, ladder_name, prestige_awards)
 
-    await interaction.followup.send(f"✅ {interaction.user.mention} — Points: **{points}** • Ladder Rank: **{ladder_name}** • Prestige: **{', '.join(prestige_awards) if prestige_awards else 'None'}**")
+    await interaction.followup.send(
+        f"✅ {interaction.user.mention} — Points: **{points}** • Ladder Rank: **{ladder_name}** • Prestige: **{', '.join(prestige_awards) if prestige_awards else 'None'}**"
+    )
 
 @tree.command(name="points", description="Check your points and rank")
 async def points(interaction: discord.Interaction, member: discord.Member = None):
