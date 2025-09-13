@@ -10,8 +10,8 @@ import requests
 import discord
 from discord.ext import commands
 from discord import app_commands
-import database
-from pointsystem import calculate_points
+import database  # zorg dat je deze hebt
+from pointsystem import calculate_points  # zorg dat je deze hebt
 
 # ===== Config =====
 DISCORD_TOKEN = os.getenv("DISCORD_TOKEN")
@@ -34,7 +34,7 @@ PRESTIGE_ROLES = [
 ]
 
 # ===== Emoji mapping =====
-ROLE_EMOJIS = {
+RANK_EMOJI = {
     "Bronze": ":Bronze:",
     "Iron": ":Iron:",
     "Rune": ":Rune:",
@@ -42,6 +42,7 @@ ROLE_EMOJIS = {
     "Grandmaster": ":Dragonhunter:",
     "Legend": ":Zaryte:",
 
+    # Prestige
     "Barrows/Enforcer": ":Barrows:",
     "Skillcape": ":Skillcape:",
     "TzTok": ":Firecape:",
@@ -99,7 +100,6 @@ async def map_wise_to_schema(wise_json: dict):
         "first_time_kills": 0
     }
 
-    # --- Skills & total level ---
     levels = wise_json.get("levels") or wise_json.get("experience") or {}
     data["skills"]["total_level"] = int(levels.get("overall", {}).get("level", 0) or 0)
 
@@ -112,13 +112,11 @@ async def map_wise_to_schema(wise_json: dict):
     data["skills"]["first_99"] = ninetynines >= 1
     data["skills"]["extra_99s"] = max(0, ninetynines - 1)
 
-    # Bosses
     bosses_source = wise_json.get("bosses") or wise_json.get("bossRecords") or {}
     for key in ["barrows", "zulrah", "vorkath", "gwd", "wildy", "jad", "zuk", "cox", "tob", "toa"]:
         value = bosses_source.get(key, 0)
         data["bosses"][key] = int(value or 0)
 
-    # Diaries
     diaries = wise_json.get("diaries") or {}
     data["diaries"]["easy"] = int(diaries.get("easy", 0) or 0)
     data["diaries"]["medium"] = int(diaries.get("medium", 0) or 0)
@@ -126,14 +124,12 @@ async def map_wise_to_schema(wise_json: dict):
     data["diaries"]["elite"] = int(diaries.get("elite", 0) or 0)
     data["diaries"]["all_completed"] = diaries.get("completed", False) or diaries.get("all", False)
 
-    # Achievements / capes
     achievements = wise_json.get("titles") or wise_json.get("achievements") or {}
     data["achievements"]["quest_cape"] = bool(wise_json.get("hasQuestCape") or achievements.get("questCape"))
     data["achievements"]["music_cape"] = bool(wise_json.get("hasMusicCape") or achievements.get("musicCape"))
     data["achievements"]["diary_cape"] = bool(achievements.get("diaryCape") or wise_json.get("hasDiaryCape"))
     data["achievements"]["max_cape"] = bool(achievements.get("maxCape") or wise_json.get("isMaxed"))
 
-    # Pets
     pets = wise_json.get("pets") or {}
     data["pets"]["skilling"] = int(pets.get("skilling", 0) or 0)
     data["pets"]["boss"] = int(pets.get("boss", 0) or 0)
@@ -155,52 +151,115 @@ async def ensure_roles_exist(guild: discord.Guild):
     return created
 
 async def assign_roles(member: discord.Member, ladder_rank_name: str, prestige_list):
-    # Verwijder oude ladder roles
     ladder_names = [r[1] for r in RANKS]
     to_remove = [r for r in member.roles if r.name in ladder_names]
     if to_remove:
         await member.remove_roles(*to_remove)
-    
-    # Voeg ladder role toe
     guild_role = discord.utils.get(member.guild.roles, name=ladder_rank_name)
     if guild_role:
         await member.add_roles(guild_role)
-    
-    # Voeg prestige roles toe
     for p in prestige_list:
         role = discord.utils.get(member.guild.roles, name=p)
         if role and role not in member.roles:
             await member.add_roles(role)
-    
-    # Pas nickname aan met emoji
-    emoji = ROLE_EMOJIS.get(ladder_rank_name, "")
+    # Update nickname with ladder emoji
+    emoji = RANK_EMOJI.get(ladder_rank_name, "")
     try:
-        base_name = member.name.split(" ")[0]  # eerste woord in naam
-        await member.edit(nick=f"{emoji} {base_name}")
-    except discord.Forbidden:
-        pass  # bot heeft geen permissies om nickname te wijzigen
+        new_nick = f"{emoji} {member.display_name.split(' ',1)[-1]}" if emoji else member.display_name
+        await member.edit(nick=new_nick)
+    except:
+        pass
 
 # ===== Slash Commands =====
 @tree.command(name="link", description="Link your OSRS account")
 async def link(interaction: discord.Interaction, rsn: str):
     await database.link_player(str(interaction.user.id), rsn)
-    await interaction.response.send_message(
-        f"✅ {interaction.user.mention}, your RSN **{rsn}** has been linked. Use `/update` to fetch your points."
-    )
+    await interaction.response.send_message(f"✅ {interaction.user.mention}, your RSN **{rsn}** has been linked. Use `/update` to fetch your points.")
 
 @tree.command(name="addpoints", description="Add points to a user (Admin only)")
 @app_commands.checks.has_permissions(administrator=True)
 async def addpoints(interaction: discord.Interaction, member: discord.Member, points: int):
     stored = await database.get_player(str(member.id))
     if not stored:
-        return await interaction.response.send_message(f"❌ {member.mention} has not linked an account yet.")
-    
+        return await interaction.response.send_message(f"❌ {member.mention} heeft nog geen account gelinkt.")
     rsn, current_points = stored
     new_points = current_points + points
     await database.update_points(str(member.id), new_points)
-    await interaction.response.send_message(
-        f"✅ {points} points added to {member.mention}. Total points: {new_points}"
-    )
+    await interaction.response.send_message(f"✅ {points} points added to {member.mention}. Total points: {new_points}")
 
 @tree.command(name="update", description="Update your points and roles")
-async def update(interaction: discord.Interaction,
+async def update(interaction: discord.Interaction, rsn: str = None):
+    discord_id = str(interaction.user.id)
+    stored = await database.get_player(discord_id)
+    if not stored and not rsn:
+        return await interaction.response.send_message(
+            "❌ You need to link an RSN first using `/link <rsn>` or provide an RSN in this command."
+        )
+    target_rsn = rsn if rsn else stored[0]
+    await interaction.response.send_message("🔄 Fetching player data...")
+    wise_json = await fetch_wise_player(target_rsn)
+    if not wise_json:
+        return await interaction.followup.send(
+            "❌ Could not fetch player data from Wise Old Man API. Make sure the RSN is correct."
+        )
+    mapped = await map_wise_to_schema(wise_json)
+    points = calculate_points(mapped)
+    if not stored:
+        await database.link_player(discord_id, target_rsn)
+    await database.update_points(discord_id, points)
+    ladder_name = get_rank(points)
+
+    prestige_awards = []
+    a = mapped.get("achievements", {})
+    d = mapped.get("diaries", {})
+    s = mapped.get("skills", {})
+    p = mapped.get("pets", {})
+    b = mapped.get("bosses", {})
+
+    if a.get("quest_cape"): prestige_awards.append("Quester")
+    if a.get("music_cape"): prestige_awards.append("Musician")
+    if a.get("diary_cape"): prestige_awards.append("Achiever")
+    if a.get("max_cape"): prestige_awards.append("Maxed")
+    if d.get("elite", 0) >= 1: prestige_awards.append("Elite")
+    if s.get("total_level", 0) >= 2277: prestige_awards.append("126")
+    if b.get("barrows", 0) >= 1: prestige_awards.append("Barrows/Enforcer")
+    if b.get("zulrah", 0) >= 1 or b.get("vorkath", 0) >= 1: prestige_awards.append("TzTok")
+    total_pets = p.get("skilling",0) + p.get("boss",0) + p.get("raids",0)
+    if total_pets >= 30: prestige_awards.append("Pet Hunter")
+
+    await ensure_roles_exist(interaction.guild)
+    await assign_roles(interaction.user, ladder_name, prestige_awards)
+
+    await interaction.followup.send(
+        f"✅ {interaction.user.mention} — Points: **{points}** • Ladder Rank: **{ladder_name}** • Prestige: **{', '.join(prestige_awards) if prestige_awards else 'None'}**"
+    )
+
+@tree.command(name="points", description="Check your points and rank")
+async def points(interaction: discord.Interaction, member: discord.Member = None):
+    if member is None:
+        member = interaction.user
+    stored = await database.get_player(str(member.id))
+    if not stored:
+        return await interaction.response.send_message(f"❌ {member.mention} has not linked an RSN yet.")
+    rsn, pts = stored
+    rank = get_rank(pts)
+    await interaction.response.send_message(
+        f"🏆 {member.mention} | RSN: **{rsn}** | Points: **{pts}** | Rank: **{rank}**"
+    )
+
+# ===== On Ready Event =====
+@bot.event
+async def on_ready():
+    await tree.sync()
+    print(f"Bot is online as {bot.user}")
+    await database.init_db()
+    for guild in bot.guilds:
+        created = await ensure_roles_exist(guild)
+        if created:
+            print(f"Created roles in {guild.name}: {created}")
+
+# ===== Start Bot =====
+if not DISCORD_TOKEN:
+    print("ERROR: DISCORD_TOKEN env var not set. Set it in Render (or locally) en restart.")
+else:
+    bot.run(DISCORD_TOKEN)
