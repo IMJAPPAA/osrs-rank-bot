@@ -1,3 +1,5 @@
+import os
+
 # Dummy audioop module om crash te voorkomen op Python 3.13+
 import sys
 import types
