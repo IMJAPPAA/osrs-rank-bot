@@ -1,3 +1,20 @@
+async def ensure_roles_exist(guild: discord.Guild):
+    """Ensure ladder ranks + prestige roles exist; create them if missing (no icons)."""
+    existing = {r.name: r for r in guild.roles}
+    created = []
+    # Ladder roles
+    for _, name in RANKS:
+        if name not in existing:
+            role = await guild.create_role(name=name)
+            created.append(role.name)
+    # Prestige roles
+    for pname in PRESTIGE_ROLES:
+        if pname not in existing:
+            role = await guild.create_role(name=pname)
+            created.append(role.name)
+    return created
+
+
 async def map_wise_to_schema(wise_json: dict):
     """
     Map Wise Old Man JSON naar het schema dat calculate_points() verwacht.
