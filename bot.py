@@ -1,3 +1,47 @@
+# Dummy audioop module om crash te voorkomen op Python 3.13+
+import sys
+import types
+sys.modules['audioop'] = types.ModuleType('audioop')
+
+import discord
+from discord.ext import commands
+from discord import app_commands
+import asyncio
+import requests
+import database  # zorg dat je deze hebt
+from pointsystem import calculate_points  # zorg dat je deze hebt
+
+# Maak bot en app_commands tree
+bot = commands.Bot(command_prefix="!", intents=discord.Intents.all())
+tree = bot.tree
+
+# ===== Slash Commands =====
+
+@tree.command(name="link", description="Link your OSRS account")
+async def link(interaction: discord.Interaction, rsn: str):
+    # Hier komt jouw code om de account te linken
+    await interaction.response.send_message(f"RSN {rsn} linked!")
+
+@tree.command(name="update", description="Update your points and stats")
+async def update(interaction: discord.Interaction):
+    # Hier komt jouw code om stats en punten te updaten
+    await interaction.response.send_message("Your stats have been updated!")
+
+@tree.command(name="points", description="Check your points")
+async def points(interaction: discord.Interaction):
+    # Hier komt jouw code om de punten op te halen
+    await interaction.response.send_message("You have X points!")
+
+# ===== On Ready Event =====
+@bot.event
+async def on_ready():
+    await tree.sync()  # registreer alle slash commands bij Discord
+    print(f"Bot is online as {bot.user}")
+
+# ===== Start Bot =====
+bot.run("YOUR_DISCORD_TOKEN")  # vervang door je echte Discord token
+
+
 import sys
 import types
 
