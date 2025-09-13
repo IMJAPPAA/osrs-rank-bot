@@ -176,6 +176,17 @@ async def link(interaction: discord.Interaction, rsn: str):
     await database.link_player(str(interaction.user.id), rsn)
     await interaction.response.send_message(f"✅ {interaction.user.mention}, your RSN **{rsn}** has been linked. Use `/update` to fetch your points.")
 
+# ---- NEW givepoints command ----
+@tree.command(name="givepoints", description="Add points to a user (Admin only)")
+@app_commands.checks.has_permissions(administrator=True)
+async def givepoints(interaction: discord.Interaction, member: discord.Member, points: int):
+    stored = await database.get_player(str(member.id))
+    if not stored:
+        return await interaction.response.send_message(f"❌ {member.mention} has not linked an RSN yet.")
+    rsn, current_points = stored
+    new_points = current_points + points
+    await database.update_points(str(member.id), new_points)
+    await interaction.response.send_message(f"✅ {points} points added to {member.mention}. Total points: {new_points}")
 
 @tree.command(name="update", description="Update your points and roles")
 async def update(interaction: discord.Interaction, rsn: str = None):
