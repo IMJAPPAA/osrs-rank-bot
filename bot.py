@@ -1,3 +1,9 @@
+import sys
+import types
+
+# Dummy audioop module to bypass missing error on Python 3.13+
+sys.modules['audioop'] = types.ModuleType('audioop')
+
 import os
 import asyncio
 import requests
