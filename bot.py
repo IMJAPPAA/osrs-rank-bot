@@ -39,7 +39,7 @@ async def on_ready():
     print(f"Bot is online as {bot.user}")
 
 # ===== Start Bot =====
-bot.run("YOUR_DISCORD_TOKEN")  # vervang door je echte Discord token
+bot.run(os.environ['DISCORD_TOKEN']) # vervang door je echte Discord token
 
 
 import sys
