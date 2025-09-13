@@ -12,6 +12,7 @@ from discord.ext import commands
 from discord import app_commands
 import database  # zorg dat je deze hebt
 from pointsystem import calculate_points  # zorg dat je deze hebt
+import re  # Voor het schoonmaken van nicknames
 
 # ===== Config =====
 DISCORD_TOKEN = os.getenv("DISCORD_TOKEN")
@@ -33,7 +34,7 @@ PRESTIGE_ROLES = [
     "Braindead", "Leaguer", "Maxed", "Clogger", "Kitted", "Pet Hunter", "Last Event Winner"
 ]
 
-# ===== Emoji mapping =====
+# ===== Emoji mapping (wordt niet gebruikt voor nicknames) =====
 RANK_EMOJI = {
     "Bronze": ":Bronze:",
     "Iron": ":Iron:",
@@ -41,8 +42,6 @@ RANK_EMOJI = {
     "Dragon": ":Dragon:",
     "Grandmaster": ":Dragonhunter:",
     "Legend": ":Zaryte:",
-
-    # Prestige
     "Barrows/Enforcer": ":Barrows:",
     "Skillcape": ":Skillcape:",
     "TzTok": ":Firecape:",
@@ -162,11 +161,11 @@ async def assign_roles(member: discord.Member, ladder_rank_name: str, prestige_l
         role = discord.utils.get(member.guild.roles, name=p)
         if role and role not in member.roles:
             await member.add_roles(role)
-    # Update nickname with ladder emoji
-    emoji = RANK_EMOJI.get(ladder_rank_name, "")
+    
+    # ==== Clean nickname: remove any ladder emoji ====
+    clean_name = re.sub(r'^:[^:]+:\s*', '', member.display_name)
     try:
-        new_nick = f"{emoji} {member.display_name.split(' ',1)[-1]}" if emoji else member.display_name
-        await member.edit(nick=new_nick)
+        await member.edit(nick=clean_name)
     except:
         pass
 
@@ -176,10 +175,9 @@ async def link(interaction: discord.Interaction, rsn: str):
     await database.link_player(str(interaction.user.id), rsn)
     await interaction.response.send_message(f"✅ {interaction.user.mention}, your RSN **{rsn}** has been linked. Use `/update` to fetch your points.")
 
-# ---- NEW givepoints command ----
-@tree.command(name="givepoints", description="Add points to a user (Admin only)")
+@tree.command(name="grantpoints", description="Add points to a user (Admin only)")
 @app_commands.checks.has_permissions(administrator=True)
-async def givepoints(interaction: discord.Interaction, member: discord.Member, points: int):
+async def grantpoints(interaction: discord.Interaction, member: discord.Member, points: int):
     stored = await database.get_player(str(member.id))
     if not stored:
         return await interaction.response.send_message(f"❌ {member.mention} has not linked an RSN yet.")
@@ -261,7 +259,6 @@ async def on_ready():
             print(f"Created roles in {guild.name}: {created}")
 
     print(f"✅ Bot is online as {bot.user} and commands are synced")
-
 
 # ===== Start Bot =====
 if not DISCORD_TOKEN:
