@@ -186,6 +186,46 @@ async def addpoints(interaction: discord.Interaction, member: discord.Member, po
     await database.update_points(str(member.id), new_points)
     await interaction.response.send_message(f"✅ {points} points added to {member.mention}. Total points: {new_points}")
 
+# ===== REQUESTPOINTS SYSTEM =====
+@tree.command(name="requestpoint", description="Request points for your account (Admin approval required)")
+async def requestpoint(interaction: discord.Interaction, rsn: str, amount: int):
+    if amount <= 0:
+        return await interaction.response.send_message("❌ Points must be greater than 0.")
+    discord_id = str(interaction.user.id)
+    await database.add_point_request(discord_id, rsn, amount)
+    await interaction.response.send_message(
+        f"📨 {interaction.user.mention}, your request for **{amount} points** for RSN `{rsn}` has been submitted. An admin will review it."
+    )
+
+@tree.command(name="requests", description="View pending point requests (Admin only)")
+@app_commands.checks.has_permissions(administrator=True)
+async def requests(interaction: discord.Interaction):
+    pending = await database.get_pending_requests()
+    if not pending:
+        return await interaction.response.send_message("✅ No pending requests.")
+    msg = "📋 **Pending Requests:**\n"
+    for r in pending:
+        msg += f"ID: {r['id']} | RSN: {r['rsn']} | Points: {r['points']} | User ID: {r['discord_id']} | Created: {r['created_at']}\n"
+    await interaction.response.send_message(msg)
+
+@tree.command(name="approve", description="Approve a point request (Admin only)")
+@app_commands.checks.has_permissions(administrator=True)
+async def approve(interaction: discord.Interaction, request_id: int):
+    pending = await database.get_pending_requests()
+    req = next((r for r in pending if r['id'] == request_id), None)
+    if not req:
+        return await interaction.response.send_message(f"❌ Request ID {request_id} not found.")
+    # Voeg punten toe via bestaande addpoints functie
+    member = interaction.guild.get_member(int(req['discord_id']))
+    if member:
+        stored = await database.get_player(req['discord_id'])
+        current_points = stored[1] if stored else 0
+        new_points = current_points + req['points']
+        await database.update_points(req['discord_id'], new_points)
+    await database.update_request_status(request_id, "approved")
+    await interaction.response.send_message(f"✅ Request ID {request_id} approved and points added.")
+
+# ===== UPDATE / POINTS COMMANDS =====
 @tree.command(name="update", description="Update your points and roles")
 async def update(interaction: discord.Interaction, rsn: str = None):
     discord_id = str(interaction.user.id)
@@ -204,11 +244,9 @@ async def update(interaction: discord.Interaction, rsn: str = None):
     mapped = await map_wise_to_schema(wise_json)
     base_points = calculate_points(mapped)
 
-    # === Optie A: Handmatig toegevoegde punten optellen bovenop base_points ===
     manual_points = 0
     if stored:
         _, current_points = stored
-        # Het verschil is het handmatige gedeelte
         manual_points = max(0, current_points - base_points)
 
     total_points = base_points + manual_points
