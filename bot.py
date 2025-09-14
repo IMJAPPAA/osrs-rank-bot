@@ -175,9 +175,9 @@ async def link(interaction: discord.Interaction, rsn: str):
     await database.link_player(str(interaction.user.id), rsn)
     await interaction.response.send_message(f"✅ {interaction.user.mention}, your RSN **{rsn}** has been linked. Use `/update` to fetch your points.")
 
-@tree.command(name="grantpoints", description="Add points to a user (Admin only)")
+@tree.command(name="addpoints", description="Add points to a user (Admin only)")
 @app_commands.checks.has_permissions(administrator=True)
-async def grantpoints(interaction: discord.Interaction, member: discord.Member, points: int):
+async def addpoints(interaction: discord.Interaction, member: discord.Member, points: int):
     stored = await database.get_player(str(member.id))
     if not stored:
         return await interaction.response.send_message(f"❌ {member.mention} has not linked an RSN yet.")
@@ -251,24 +251,15 @@ async def points(interaction: discord.Interaction, member: discord.Member = None
 async def on_ready():
     await database.init_db()
 
+    # 🔄 Global sync (kan tot ±1 uur duren om te verschijnen)
+    await tree.sync()
+
     for guild in bot.guilds:
-        # Haal alle commands op die in deze guild geregistreerd zijn
-        existing_commands = await tree.fetch_commands(guild=guild)
-
-        # Verwijder oude /addpoints command
-        for cmd in existing_commands:
-            if cmd.name == "addpoints":
-                await tree.delete_command(cmd.id, guild=guild)
-                print(f"Deleted old command {cmd.name} in {guild.name}")
-
-        # Sync nieuwe commands
-        await tree.sync(guild=guild)
         created = await ensure_roles_exist(guild)
         if created:
             print(f"Created roles in {guild.name}: {created}")
 
-    print(f"✅ Bot is online as {bot.user} and commands are synced")
-
+    print(f"✅ Bot is online as {bot.user} and commands are globally synced")
 
 # ===== Start Bot =====
 if not DISCORD_TOKEN:
