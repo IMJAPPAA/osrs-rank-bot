@@ -1,63 +1,99 @@
-def calculate_points(data):
+# pointsystem.py
+
+def calculate_points(mapped: dict) -> int:
     points = 0
 
-    # === Bosses (per 100 kills unless stated) ===
-    b = data.get("bosses", {})
-    points += (b.get("barrows", 0) // 100) * 10
-    points += (b.get("zulrah", 0) // 100) * 25
-    points += (b.get("vorkath", 0) // 100) * 30
-    points += (b.get("gwd", 0) // 100) * 40
-    points += (b.get("wildy", 0) // 100) * 50
-    points += b.get("jad", 0) * 25   # per kill
-    points += b.get("zuk", 0) * 150  # per clear
-    points += (b.get("cox", 0) // 100) * 75
-    points += (b.get("tob", 0) // 100) * 75
-    points += (b.get("toa", 0) // 100) * 75
-    points += data.get("first_time_kills", 0) * 10
-
-    # === Diaries ===
-    d = data.get("diaries", {})
-    points += d.get("easy", 0) * 5
-    points += d.get("medium", 0) * 10
-    points += d.get("hard", 0) * 20
-    points += d.get("elite", 0) * 40
-    if d.get("all_completed", False):
+    # === TOTAL LEVELS ===
+    total_level = mapped["skills"]["total_level"]
+    if total_level < 1000:
+        points += 25
+    elif total_level < 1500:
+        points += 30
+    elif total_level < 1750:
+        points += 35
+    elif total_level < 2000:
+        points += 40
+    elif total_level < 2200:
+        points += 45
+    else:
         points += 50
 
-    # === Achievements ===
-    a = data.get("achievements", {})
-    if a.get("quest_cape"): points += 75
-    if a.get("music_cape"): points += 25
-    if a.get("diary_cape"): points += 100
-    if a.get("max_cape"): points += 300
+    # === BOSSES (per 100 KC) ===
+    bosses = mapped["bosses"]
+    points += (bosses.get("barrows", 0) // 100) * 10
+    points += (bosses.get("zulrah", 0) // 100) * 25
+    points += (bosses.get("vorkath", 0) // 100) * 30
+    points += (bosses.get("gwd", 0) // 100) * 40
+    points += (bosses.get("wildy", 0) // 100) * 50
 
-    # === Skills ===
-    s = data.get("skills", {})
-    if s.get("first_99"): points += 50
-    points += s.get("extra_99s", 0) * 25
-    if s.get("total_level") == 2277: points += 200
+    # === First-time boss kills ===
+    points += mapped.get("first_time_kills", 0) * 10
 
-    # If player is maxed (defensive check) and not flagged via achievements
-    if s.get("total_level", 0) >= 2277 and a.get("max_cape") == False:
+    # === Jad & Zuk ===
+    points += bosses.get("jad", 0) * 25
+    points += bosses.get("zuk", 0) * 150
+
+    # === RAIDS ===
+    points += bosses.get("cox", 0) * 75
+    points += bosses.get("tob", 0) * 75
+    points += bosses.get("toa", 0) * 75
+
+    # === DIARIES ===
+    diaries = mapped["diaries"]
+    if diaries.get("easy", 0) >= 1:
+        points += 5
+    if diaries.get("medium", 0) >= 1:
+        points += 10
+    if diaries.get("hard", 0) >= 1:
+        points += 20
+    if diaries.get("elite", 0) >= 1:
+        points += 40
+    if diaries.get("all_completed"):
+        points += 50
+
+    # === ACHIEVEMENTS ===
+    achievements = mapped["achievements"]
+    if achievements.get("quest_cape"):
+        points += 75
+    if achievements.get("music_cape"):
+        points += 25
+    if achievements.get("diary_cape"):
+        points += 100
+    if achievements.get("max_cape"):
         points += 300
 
-    # === Pets ===
-    p = data.get("pets", {})
-    points += p.get("skilling", 0) * 25
-    points += p.get("boss", 0) * 50
-    points += p.get("raids", 0) * 75
+    # === SKILLS ===
+    skills = mapped["skills"]
+    if skills.get("first_99"):
+        points += 50
+    points += skills.get("extra_99s", 0) * 25
+    if skills.get("total_level") >= 2277:
+        points += 200
+    if achievements.get("max_cape"):
+        points += 300
 
-    # === Events ===
-    e = data.get("events", {})
-    points += e.get("pvm_participations", 0) * 10
-    points += e.get("event_wins", 0) * 15
+    # === PETS ===
+    pets = mapped["pets"]
+    points += pets.get("skilling", 0) * 25
+    points += pets.get("boss", 0) * 50
+    points += pets.get("raids", 0) * 75
 
-    # === Donations ===
-    donation = data.get("donations", 0)
-    if 1 <= donation < 25: points += 10
-    elif 25 <= donation < 50: points += 20
-    elif 50 <= donation < 100: points += 40
-    elif 100 <= donation < 200: points += 80
-    elif donation >= 200: points += 150
+    # === EVENTS (manual, via admin) ===
+    events = mapped.get("events", {})
+    points += events.get("pvm_participations", 0) * 10
+    points += events.get("event_wins", 0) * 15
+
+    # === DONATIONS (manual, via admin) ===
+    donations = mapped.get("donations", 0)
+    if 1 <= donations < 25:
+        points += 10
+    elif 25 <= donations < 50:
+        points += 20
+    elif 50 <= donations < 100:
+        points += 40
+    elif 100 <= donations < 200:
+        points += 80
+    elif donations >= 200:
+        points += 150
 
     return points
