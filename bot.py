@@ -202,11 +202,21 @@ async def update(interaction: discord.Interaction, rsn: str = None):
             "❌ Could not fetch player data from Wise Old Man API. Make sure the RSN is correct."
         )
     mapped = await map_wise_to_schema(wise_json)
-    points = calculate_points(mapped)
+    base_points = calculate_points(mapped)
+
+    # === Optie A: Handmatig toegevoegde punten optellen bovenop base_points ===
+    manual_points = 0
+    if stored:
+        _, current_points = stored
+        # Het verschil is het handmatige gedeelte
+        manual_points = max(0, current_points - base_points)
+
+    total_points = base_points + manual_points
+
     if not stored:
         await database.link_player(discord_id, target_rsn)
-    await database.update_points(discord_id, points)
-    ladder_name = get_rank(points)
+    await database.update_points(discord_id, total_points)
+    ladder_name = get_rank(total_points)
 
     prestige_awards = []
     a = mapped.get("achievements", {})
@@ -230,7 +240,7 @@ async def update(interaction: discord.Interaction, rsn: str = None):
     await assign_roles(interaction.user, ladder_name, prestige_awards)
 
     await interaction.followup.send(
-        f"✅ {interaction.user.mention} — Points: **{points}** • Ladder Rank: **{ladder_name}** • Prestige: **{', '.join(prestige_awards) if prestige_awards else 'None'}**"
+        f"✅ {interaction.user.mention} — Points: **{total_points}** • Ladder Rank: **{ladder_name}** • Prestige: **{', '.join(prestige_awards) if prestige_awards else 'None'}**"
     )
 
 @tree.command(name="points", description="Check your points and rank")
@@ -250,16 +260,12 @@ async def points(interaction: discord.Interaction, member: discord.Member = None
 @bot.event
 async def on_ready():
     await database.init_db()
-
-    # 🔄 Global sync (kan tot ±1 uur duren om te verschijnen)
-    await tree.sync()
-
+    await tree.sync()  # Global sync
     for guild in bot.guilds:
         created = await ensure_roles_exist(guild)
         if created:
             print(f"Created roles in {guild.name}: {created}")
-
-    print(f"✅ Bot is online as {bot.user} and commands are globally synced")
+    print(f"✅ Bot is online as {bot.user} and commands are synced globally")
 
 # ===== Start Bot =====
 if not DISCORD_TOKEN:
