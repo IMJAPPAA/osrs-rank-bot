@@ -294,9 +294,11 @@ async def update(interaction: discord.Interaction, rsn: str = None):
     await ensure_roles_exist(interaction.guild)
     await assign_roles(interaction.user, ladder_name, prestige_awards)
 
+    # Split f-string fix
+    prestige_text = ', '.join(prestige_awards) if prestige_awards else 'None'
     await interaction.followup.send(
         f"✅ {interaction.user.mention} — Points: **{total_points}** • "
-        f"Ladder Rank: **{ladder_name}** • Prestige: **{', '.join(prestige_awards) if prestige_awards else 'None'}**"
+        f"Ladder Rank: **{ladder_name}** • Prestige: **{prestige_text}**"
     )
 
 @tree.command(name="points", description="Check your points and rank")
@@ -313,4 +315,18 @@ async def points(interaction: discord.Interaction, member: discord.Member = None
     )
 
 # ===== On Ready Event =====
-@b
+@bot.event
+async def on_ready():
+    await database.init_db()
+    await tree.sync()  # Global sync
+    for guild in bot.guilds:
+        created = await ensure_roles_exist(guild)
+        if created:
+            print(f"Created roles in {guild.name}: {created}")
+    print(f"✅ Bot is online as {bot.user} and commands are synced globally")
+
+# ===== Start Bot =====
+if not DISCORD_TOKEN:
+    print("ERROR: DISCORD_TOKEN env var not set. Set it in Render (of lokaal) en restart.")
+else:
+    bot.run(DISCORD_TOKEN)
