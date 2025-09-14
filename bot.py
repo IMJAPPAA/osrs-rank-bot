@@ -78,20 +78,14 @@ def get_rank(points):
             rank = name
     return rank
 
-# ===== Fetch player from Wise Old Man safely =====
 async def fetch_wise_player(rsn: str):
+    """Fetch player from Wise Old Man API safely"""
     try:
         loop = asyncio.get_running_loop()
         url = WISE_API + urllib.parse.quote(rsn)
         resp = await loop.run_in_executor(None, lambda: requests.get(url, timeout=10))
-        if resp.status_code == 404:
-            print(f"WOM API: RSN {rsn} not found (404).")
-            return None
-        if resp.status_code == 429:
-            print(f"WOM API: Rate limit reached for RSN {rsn} (429).")
-            return None
         if resp.status_code != 200:
-            print(f"WOM API: Unexpected status {resp.status_code} for RSN {rsn}.")
+            print(f"WOM API returned status {resp.status_code} for RSN {rsn}")
             return None
         return resp.json()
     except Exception as e:
@@ -111,9 +105,7 @@ async def map_wise_to_schema(wise_json: dict):
     }
 
     levels = wise_json.get("levels") or wise_json.get("experience") or {}
-    overall_level = 0
-    if "overall" in levels and isinstance(levels["overall"], dict):
-        overall_level = int(levels["overall"].get("level", 0) or 0)
+    overall_level = int(levels.get("overall", {}).get("level", 0) or 0)
     data["skills"]["total_level"] = overall_level
 
     ninetynines = 0
@@ -127,8 +119,7 @@ async def map_wise_to_schema(wise_json: dict):
 
     bosses_source = wise_json.get("bosses") or wise_json.get("bossRecords") or {}
     for key in ["barrows", "zulrah", "vorkath", "gwd", "wildy", "jad", "zuk", "cox", "tob", "toa"]:
-        value = bosses_source.get(key, 0)
-        data["bosses"][key] = int(value or 0)
+        data["bosses"][key] = int(bosses_source.get(key, 0) or 0)
 
     diaries = wise_json.get("diaries") or {}
     data["diaries"]["easy"] = int(diaries.get("easy", 0) or 0)
@@ -176,7 +167,6 @@ async def assign_roles(member: discord.Member, ladder_rank_name: str, prestige_l
         if role and role not in member.roles:
             await member.add_roles(role)
     
-    # Clean nickname: remove any ladder emoji
     clean_name = re.sub(r'^:[^:]+:\s*', '', member.display_name)
     try:
         await member.edit(nick=clean_name)
@@ -200,44 +190,6 @@ async def addpoints(interaction: discord.Interaction, member: discord.Member, po
     await database.update_points(str(member.id), new_points)
     await interaction.response.send_message(f"✅ {points} points added to {member.mention}. Total points: {new_points}")
 
-@tree.command(name="requestpoint", description="Request points for your account (Admin approval required)")
-async def requestpoint(interaction: discord.Interaction, rsn: str, amount: int):
-    if amount <= 0:
-        return await interaction.response.send_message("❌ Points must be greater than 0.")
-    discord_id = str(interaction.user.id)
-    await database.add_point_request(discord_id, rsn, amount)
-    await interaction.response.send_message(
-        f"📨 {interaction.user.mention}, your request for **{amount} points** for RSN `{rsn}` has been submitted. An admin will review it."
-    )
-
-@tree.command(name="requests", description="View pending point requests (Admin only)")
-@app_commands.checks.has_permissions(administrator=True)
-async def requests(interaction: discord.Interaction):
-    pending = await database.get_pending_requests()
-    if not pending:
-        return await interaction.response.send_message("✅ No pending requests.")
-    msg = "📋 **Pending Requests:**\n"
-    for r in pending:
-        msg += f"ID: {r['id']} | RSN: {r['rsn']} | Points: {r['points']} | User ID: {r['discord_id']} | Created: {r['created_at']}\n"
-    await interaction.response.send_message(msg)
-
-@tree.command(name="approve", description="Approve a point request (Admin only)")
-@app_commands.checks.has_permissions(administrator=True)
-async def approve(interaction: discord.Interaction, request_id: int):
-    pending = await database.get_pending_requests()
-    req = next((r for r in pending if r['id'] == request_id), None)
-    if not req:
-        return await interaction.response.send_message(f"❌ Request ID {request_id} not found.")
-    member = interaction.guild.get_member(int(req['discord_id']))
-    if member:
-        stored = await database.get_player(req['discord_id'])
-        current_points = stored[1] if stored else 0
-        new_points = current_points + req['points']
-        await database.update_points(req['discord_id'], new_points)
-    await database.update_request_status(request_id, "approved")
-    await interaction.response.send_message(f"✅ Request ID {request_id} approved and points added.")
-
-# ===== UPDATE / POINTS COMMANDS (VEILIG) =====
 @tree.command(name="update", description="Update your points and roles")
 async def update(interaction: discord.Interaction, rsn: str = None):
     discord_id = str(interaction.user.id)
@@ -250,12 +202,13 @@ async def update(interaction: discord.Interaction, rsn: str = None):
 
     target_rsn = rsn if rsn else stored[0]
 
-    await interaction.response.send_message(f"🔄 Fetching data for **{target_rsn}**...")
+    # ==== DEFERRING FIX ====
+    await interaction.response.defer(thinking=True)
 
     wise_json = await fetch_wise_player(target_rsn)
     if not wise_json:
         return await interaction.followup.send(
-            f"❌ Could not fetch player data from Wise Old Man. Check RSN `{target_rsn}` or try again later."
+            f"❌ Could not fetch player data from Wise Old Man. Check RSN `{target_rsn}` or probeer later opnieuw."
         )
 
     mapped = await map_wise_to_schema(wise_json)
@@ -294,7 +247,6 @@ async def update(interaction: discord.Interaction, rsn: str = None):
     await ensure_roles_exist(interaction.guild)
     await assign_roles(interaction.user, ladder_name, prestige_awards)
 
-    # Split f-string fix
     prestige_text = ', '.join(prestige_awards) if prestige_awards else 'None'
     await interaction.followup.send(
         f"✅ {interaction.user.mention} — Points: **{total_points}** • "
@@ -318,7 +270,7 @@ async def points(interaction: discord.Interaction, member: discord.Member = None
 @bot.event
 async def on_ready():
     await database.init_db()
-    await tree.sync()  # Global sync
+    await tree.sync()
     for guild in bot.guilds:
         created = await ensure_roles_exist(guild)
         if created:
@@ -327,6 +279,6 @@ async def on_ready():
 
 # ===== Start Bot =====
 if not DISCORD_TOKEN:
-    print("ERROR: DISCORD_TOKEN env var not set. Set it in Render (of lokaal) en restart.")
+    print("ERROR: DISCORD_TOKEN env var not set. Set het lokaal of op Render en restart.")
 else:
     bot.run(DISCORD_TOKEN)
