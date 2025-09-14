@@ -13,6 +13,7 @@ from discord import app_commands
 import database  # zorg dat je deze hebt
 from pointsystem import calculate_points  # zorg dat je deze hebt
 import re  # Voor het schoonmaken van nicknames
+import urllib.parse
 
 # ===== Config =====
 DISCORD_TOKEN = os.getenv("DISCORD_TOKEN")
@@ -77,14 +78,24 @@ def get_rank(points):
             rank = name
     return rank
 
+# ===== Fetch player from Wise Old Man safely =====
 async def fetch_wise_player(rsn: str):
     try:
         loop = asyncio.get_running_loop()
-        resp = await loop.run_in_executor(None, lambda: requests.get(WISE_API + rsn, timeout=10))
+        url = WISE_API + urllib.parse.quote(rsn)
+        resp = await loop.run_in_executor(None, lambda: requests.get(url, timeout=10))
+        if resp.status_code == 404:
+            print(f"WOM API: RSN {rsn} not found (404).")
+            return None
+        if resp.status_code == 429:
+            print(f"WOM API: Rate limit reached for RSN {rsn} (429).")
+            return None
         if resp.status_code != 200:
+            print(f"WOM API: Unexpected status {resp.status_code} for RSN {rsn}.")
             return None
         return resp.json()
-    except Exception:
+    except Exception as e:
+        print(f"Error fetching RSN {rsn} from WOM: {e}")
         return None
 
 async def map_wise_to_schema(wise_json: dict):
@@ -100,7 +111,10 @@ async def map_wise_to_schema(wise_json: dict):
     }
 
     levels = wise_json.get("levels") or wise_json.get("experience") or {}
-    data["skills"]["total_level"] = int(levels.get("overall", {}).get("level", 0) or 0)
+    overall_level = 0
+    if "overall" in levels and isinstance(levels["overall"], dict):
+        overall_level = int(levels["overall"].get("level", 0) or 0)
+    data["skills"]["total_level"] = overall_level
 
     ninetynines = 0
     if isinstance(levels, dict):
@@ -162,7 +176,7 @@ async def assign_roles(member: discord.Member, ladder_rank_name: str, prestige_l
         if role and role not in member.roles:
             await member.add_roles(role)
     
-    # ==== Clean nickname: remove any ladder emoji ====
+    # Clean nickname: remove any ladder emoji
     clean_name = re.sub(r'^:[^:]+:\s*', '', member.display_name)
     try:
         await member.edit(nick=clean_name)
@@ -186,7 +200,6 @@ async def addpoints(interaction: discord.Interaction, member: discord.Member, po
     await database.update_points(str(member.id), new_points)
     await interaction.response.send_message(f"✅ {points} points added to {member.mention}. Total points: {new_points}")
 
-# ===== REQUESTPOINTS SYSTEM =====
 @tree.command(name="requestpoint", description="Request points for your account (Admin approval required)")
 async def requestpoint(interaction: discord.Interaction, rsn: str, amount: int):
     if amount <= 0:
@@ -215,7 +228,6 @@ async def approve(interaction: discord.Interaction, request_id: int):
     req = next((r for r in pending if r['id'] == request_id), None)
     if not req:
         return await interaction.response.send_message(f"❌ Request ID {request_id} not found.")
-    # Voeg punten toe via bestaande addpoints functie
     member = interaction.guild.get_member(int(req['discord_id']))
     if member:
         stored = await database.get_player(req['discord_id'])
@@ -225,22 +237,27 @@ async def approve(interaction: discord.Interaction, request_id: int):
     await database.update_request_status(request_id, "approved")
     await interaction.response.send_message(f"✅ Request ID {request_id} approved and points added.")
 
-# ===== UPDATE / POINTS COMMANDS =====
+# ===== UPDATE / POINTS COMMANDS (VEILIG) =====
 @tree.command(name="update", description="Update your points and roles")
 async def update(interaction: discord.Interaction, rsn: str = None):
     discord_id = str(interaction.user.id)
     stored = await database.get_player(discord_id)
+
     if not stored and not rsn:
         return await interaction.response.send_message(
-            "❌ You need to link an RSN first using `/link <rsn>` or provide an RSN in this command."
+            "❌ Je moet eerst een RSN linken met `/link <rsn>` of een RSN opgeven."
         )
+
     target_rsn = rsn if rsn else stored[0]
-    await interaction.response.send_message("🔄 Fetching player data...")
+
+    await interaction.response.send_message(f"🔄 Fetching data for **{target_rsn}**...")
+
     wise_json = await fetch_wise_player(target_rsn)
     if not wise_json:
         return await interaction.followup.send(
-            "❌ Could not fetch player data from Wise Old Man API. Make sure the RSN is correct."
+            f"❌ Could not fetch player data from Wise Old Man. Check RSN `{target_rsn}` or try again later."
         )
+
     mapped = await map_wise_to_schema(wise_json)
     base_points = calculate_points(mapped)
 
@@ -278,7 +295,8 @@ async def update(interaction: discord.Interaction, rsn: str = None):
     await assign_roles(interaction.user, ladder_name, prestige_awards)
 
     await interaction.followup.send(
-        f"✅ {interaction.user.mention} — Points: **{total_points}** • Ladder Rank: **{ladder_name}** • Prestige: **{', '.join(prestige_awards) if prestige_awards else 'None'}**"
+        f"✅ {interaction.user.mention} — Points: **{total_points}** • "
+        f"Ladder Rank: **{ladder_name}** • Prestige: **{', '.join(prestige_awards) if prestige_awards else 'None'}**"
     )
 
 @tree.command(name="points", description="Check your points and rank")
@@ -295,18 +313,4 @@ async def points(interaction: discord.Interaction, member: discord.Member = None
     )
 
 # ===== On Ready Event =====
-@bot.event
-async def on_ready():
-    await database.init_db()
-    await tree.sync()  # Global sync
-    for guild in bot.guilds:
-        created = await ensure_roles_exist(guild)
-        if created:
-            print(f"Created roles in {guild.name}: {created}")
-    print(f"✅ Bot is online as {bot.user} and commands are synced globally")
-
-# ===== Start Bot =====
-if not DISCORD_TOKEN:
-    print("ERROR: DISCORD_TOKEN env var not set. Set it in Render (or locally) en restart.")
-else:
-    bot.run(DISCORD_TOKEN)
+@b
