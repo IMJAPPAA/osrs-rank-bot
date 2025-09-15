@@ -7,7 +7,7 @@ import os, asyncio, requests, discord, urllib.parse
 from discord.ext import commands
 from discord import app_commands
 import database
-from pointsystem import calculate_points
+from pointsystem import calculate_points, merge_duplicate_bosses
 
 # ===== Config =====
 DISCORD_TOKEN = os.getenv("DISCORD_TOKEN")
@@ -73,25 +73,34 @@ async def fetch_wise_player(rsn: str):
         return None
 
 async def map_wise_to_schema(wise_json: dict):
+    """Improved mapping to internal schema for points calculation."""
     data = {"bosses": {}, "diaries": {}, "achievements": {}, "skills": {}, "pets": {}, "events": {}, "donations": 0}
-    levels = wise_json.get("levels") or wise_json.get("experience") or {}
-    data["skills"]["total_level"] = int(levels.get("overall", {}).get("level", 0) or 0)
-    data["skills"]["combat_level"] = int(levels.get("combat", {}).get("level", 0) or 0)
-    ninetynines = sum(1 for v in levels.values() if isinstance(v, dict) and v.get("level",0)>=99)
-    data["skills"]["first_99"] = ninetynines>=1
-    data["skills"]["extra_99s"] = max(0, ninetynines-1)
 
+    # --- SKILLS ---
+    levels = wise_json.get("levels") or wise_json.get("experience") or {}
+    overall = levels.get("overall") or {}
+    combat = levels.get("combat") or {}
+    data["skills"]["total_level"] = int(overall.get("level", 0) or 0)
+    data["skills"]["combat_level"] = int(combat.get("level", 0) or 0)
+
+    ninetynines = sum(1 for v in levels.values() if isinstance(v, dict) and v.get("level", 0) >= 99)
+    data["skills"]["first_99"] = ninetynines >= 1
+    data["skills"]["extra_99s"] = max(0, ninetynines - 1)
+
+    # --- BOSSES ---
     bosses = wise_json.get("bosses") or wise_json.get("bossRecords") or {}
     for b in bosses:
-        data["bosses"][b.lower()] = int(bosses.get(b,0) or 0)
+        data["bosses"][b.lower()] = int(bosses.get(b, 0) or 0)
 
+    # --- DIARIES ---
     diaries = wise_json.get("diaries") or {}
-    data["diaries"]["easy"] = int(diaries.get("easy",0) or 0)
-    data["diaries"]["medium"] = int(diaries.get("medium",0) or 0)
-    data["diaries"]["hard"] = int(diaries.get("hard",0) or 0)
-    data["diaries"]["elite"] = int(diaries.get("elite",0) or 0)
+    data["diaries"]["easy"] = int(diaries.get("easy", 0) or 0)
+    data["diaries"]["medium"] = int(diaries.get("medium", 0) or 0)
+    data["diaries"]["hard"] = int(diaries.get("hard", 0) or 0)
+    data["diaries"]["elite"] = int(diaries.get("elite", 0) or 0)
     data["diaries"]["all_completed"] = diaries.get("completed", False) or diaries.get("all", False)
 
+    # --- ACHIEVEMENTS ---
     achievements = wise_json.get("titles") or wise_json.get("achievements") or {}
     data["achievements"]["quest_cape"] = bool(wise_json.get("hasQuestCape") or achievements.get("questCape"))
     data["achievements"]["music_cape"] = bool(wise_json.get("hasMusicCape") or achievements.get("musicCape"))
@@ -99,15 +108,18 @@ async def map_wise_to_schema(wise_json: dict):
     data["achievements"]["max_cape"] = bool(achievements.get("maxCape") or wise_json.get("isMaxed"))
     data["achievements"]["infernal_cape"] = bool(achievements.get("infernalCape"))
 
+    # --- PETS ---
     pets = wise_json.get("pets") or {}
-    data["pets"]["skilling"] = int(pets.get("skilling",0) or 0)
-    data["pets"]["boss"] = int(pets.get("boss",0) or 0)
-    data["pets"]["raids"] = int(pets.get("raids",0) or 0)
+    data["pets"]["skilling"] = int(pets.get("skilling", 0) or 0)
+    data["pets"]["boss"] = int(pets.get("boss", 0) or 0)
+    data["pets"]["raids"] = int(pets.get("raids", 0) or 0)
 
+    # --- EVENTS ---
     events = wise_json.get("events") or {}
-    data["events"]["pvm_participations"] = int(events.get("pvm_participations",0) or 0)
-    data["events"]["event_wins"] = int(events.get("event_wins",0) or 0)
+    data["events"]["pvm_participations"] = int(events.get("pvm_participations", 0) or 0)
+    data["events"]["event_wins"] = int(events.get("event_wins", 0) or 0)
 
+    # --- DONATIONS ---
     donations = wise_json.get("donations") or 0
     data["donations"] = int(donations)
 
@@ -155,7 +167,6 @@ def is_admin_or_owner():
 
 # ===== Commands =====
 
-# --- /link command ---
 @tree.command(name="link", description="Link your OSRS account")
 @app_commands.describe(
     rsn="Your RuneScape display name",
@@ -167,6 +178,7 @@ async def link(interaction: discord.Interaction, rsn: str, total_level: int = No
     wise_json = await fetch_wise_player(rsn)
     if not wise_json:
         return await interaction.followup.send(f"❌ Could not fetch data for RSN `{rsn}`. Make sure it exists on Wise Old Man.")
+
     mapped = await map_wise_to_schema(wise_json)
 
     if total_level is not None:
@@ -186,23 +198,26 @@ async def link(interaction: discord.Interaction, rsn: str, total_level: int = No
         mapped["skills"]["combat_level"] = combat_level
 
     points = calculate_points(mapped)
+    donations = mapped.get("donations", 0)
     discord_id = str(interaction.user.id)
     await database.link_player(discord_id, rsn)
-    await database.update_points(discord_id, points, mapped.get("donations",0))
+    await database.update_points(discord_id, points, donations)
 
     ladder_name = get_ladder_rank(points)
 
+    # Determine prestige
     prestige_awards = []
     a = mapped.get("achievements", {})
     s = mapped.get("skills", {})
     if a.get("quest_cape"): prestige_awards.append("Quester")
-    if s.get("combat_level",0) >= 126: prestige_awards.append("Gamer")
+    if s.get("combat_level", 0) >= 126: prestige_awards.append("Gamer")
     if a.get("diary_cape"): prestige_awards.append("Achiever")
     if a.get("max_cape"): prestige_awards.append("Maxed")
     if all(level >= 90 for k, level in s.items() if k not in ["total_level","combat_level"]): prestige_awards.append("Raider")
     if a.get("infernal_cape"): prestige_awards.append("TzKal")
 
-    donator_name = get_donator_rank(mapped.get("donations",0))
+    donator_name = get_donator_rank(donations)
+
     await ensure_roles_exist(interaction.guild)
     await assign_roles(interaction.user, ladder_name, prestige_awards, donator_name)
 
@@ -213,83 +228,65 @@ async def link(interaction: discord.Interaction, rsn: str, total_level: int = No
         f"Donator: {donator_name if donator_name else 'None'}"
     )
 
-# --- /update command ---
-@tree.command(name="update", description="Update your linked OSRS account")
-async def update(interaction: discord.Interaction):
-    await interaction.response.defer(thinking=True)
+# ===== /points =====
+@tree.command(name="points", description="Check your current points")
+async def points(interaction: discord.Interaction):
     discord_id = str(interaction.user.id)
-    rsn = await database.get_rsn(discord_id)
-    if not rsn:
-        return await interaction.followup.send("❌ You have not linked an account yet. Use `/link` first.")
+    player = await database.get_player(discord_id)
+    if not player:
+        return await interaction.response.send_message("❌ You have not linked your RSN yet.")
+    rsn, pts, dono = player
+    ladder_name = get_ladder_rank(pts)
+    donator_name = get_donator_rank(dono)
+    await interaction.response.send_message(
+        f"**{interaction.user.display_name}** - RSN: {rsn}\n"
+        f"Points: {pts} • Rank: {ladder_name} • Donator: {donator_name if donator_name else 'None'}"
+    )
+
+# ===== /update =====
+@tree.command(name="update", description="Update your points from Wise Old Man")
+async def update(interaction: discord.Interaction):
+    discord_id = str(interaction.user.id)
+    player = await database.get_player(discord_id)
+    if not player:
+        return await interaction.response.send_message("❌ You have not linked your RSN yet.")
+    rsn, _, _ = player
     wise_json = await fetch_wise_player(rsn)
     if not wise_json:
-        return await interaction.followup.send(f"❌ Could not fetch data for RSN `{rsn}`.")
+        return await interaction.response.send_message(f"❌ Could not fetch data for RSN `{rsn}`.")
     mapped = await map_wise_to_schema(wise_json)
     points = calculate_points(mapped)
-    await database.update_points(discord_id, points, mapped.get("donations",0))
-    ladder_name = get_ladder_rank(points)
+    donations = mapped.get("donations", 0)
+    await database.update_points(discord_id, points, donations)
+    await interaction.response.send_message(f"✅ Updated points: **{points}**, Donations: **{donations}**")
 
-    prestige_awards = []
-    a = mapped.get("achievements", {})
-    s = mapped.get("skills", {})
-    if a.get("quest_cape"): prestige_awards.append("Quester")
-    if s.get("combat_level",0) >= 126: prestige_awards.append("Gamer")
-    if a.get("diary_cape"): prestige_awards.append("Achiever")
-    if a.get("max_cape"): prestige_awards.append("Maxed")
-    if all(level >= 90 for k, level in s.items() if k not in ["total_level","combat_level"]): prestige_awards.append("Raider")
-    if a.get("infernal_cape"): prestige_awards.append("TzKal")
-
-    donator_name = get_donator_rank(mapped.get("donations",0))
-    await assign_roles(interaction.user, ladder_name, prestige_awards, donator_name)
-
-    await interaction.followup.send(
-        f"✅ {interaction.user.mention}'s account **{rsn}** has been updated.\n"
-        f"Points: **{points}** • Rank: **{ladder_name}** • "
-        f"Prestige: {', '.join(prestige_awards) if prestige_awards else 'None'} • "
-        f"Donator: {donator_name if donator_name else 'None'}"
-    )
-
-# --- /points command ---
-@tree.command(name="points", description="Check points of a player")
-@app_commands.describe(user="Optional: Mention a user to check their points")
-async def points(interaction: discord.Interaction, user: discord.Member = None):
-    target = user or interaction.user
-    discord_id = str(target.id)
-    points_val, donations_val = await database.get_points(discord_id)
-    ladder_name = get_ladder_rank(points_val)
-    donator_name = get_donator_rank(donations_val)
-    await interaction.response.send_message(
-        f"💠 {target.mention} • Points: **{points_val}** • Rank: **{ladder_name}** • "
-        f"Donator: {donator_name if donator_name else 'None'}"
-    )
-
-# --- /addpoints command ---
-@tree.command(name="addpoints", description="Add points to a player (Admin only)")
-@app_commands.describe(user="User to add points", points="Amount of points")
+# ===== /addpoints =====
+@tree.command(name="addpoints", description="Admin command: Add points to a user")
+@app_commands.describe(user="User to add points to", points="Points to add")
 @is_admin_or_owner()
-async def addpoints(interaction: discord.Interaction, user: discord.Member, points: int):
+async def addpoints(interaction: discord.Interaction, user: discord.User, points: int):
     discord_id = str(user.id)
-    current_points, donations_val = await database.get_points(discord_id)
+    player = await database.get_player(discord_id)
+    if not player:
+        return await interaction.response.send_message("❌ This user has not linked their RSN.")
+    rsn, current_points, donations = player
     new_points = current_points + points
-    await database.update_points(discord_id, new_points, donations_val)
-    ladder_name = get_ladder_rank(new_points)
-    await interaction.response.send_message(
-        f"✅ Added **{points}** points to {user.mention}. New total: **{new_points}** • Rank: **{ladder_name}**"
-    )
+    await database.update_points(discord_id, new_points)
+    await interaction.response.send_message(f"✅ Added {points} points to {user.display_name}. Total: {new_points}")
 
-# --- /dono command ---
-@tree.command(name="dono", description="Register a donation for a user (Admin only)")
-@app_commands.describe(user="User who donated", amount="Donation amount")
+# ===== /dono =====
+@tree.command(name="dono", description="Admin command: Add donations to a user")
+@app_commands.describe(user="User to add donations to", amount="Donation amount")
 @is_admin_or_owner()
-async def dono(interaction: discord.Interaction, user: discord.Member, amount: int):
+async def dono(interaction: discord.Interaction, user: discord.User, amount: int):
     discord_id = str(user.id)
-    current_points, current_donations = await database.get_points(discord_id)
-    new_donations = current_donations + amount
-    await database.update_points(discord_id, current_points, new_donations)
-    donator_name = get_donator_rank(new_donations)
-    await interaction.response.send_message(
-        f"💰 {user.mention} donated **{amount}**. Total donations: **{new_donations}** • Donator rank: **{donator_name if donator_name else 'None'}**"
-    )
+    player = await database.get_player(discord_id)
+    if not player:
+        return await interaction.response.send_message("❌ This user has not linked their RSN.")
+    rsn, points, current_dono = player
+    new_dono = (current_dono or 0) + amount
+    await database.update_points(discord_id, None, new_dono)
+    await interaction.response.send_message(f"✅ Added {amount} donations to {user.display_name}. Total: {new_dono}")
 
 # ===== On Ready =====
 @bot.event
