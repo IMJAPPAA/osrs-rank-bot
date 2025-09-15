@@ -155,6 +155,7 @@ def is_admin_or_owner():
 
 # ===== Commands =====
 
+# --- /link command ---
 @tree.command(name="link", description="Link your OSRS account")
 @app_commands.describe(
     rsn="Your RuneScape display name",
@@ -172,8 +173,7 @@ async def link(interaction: discord.Interaction, rsn: str, total_level: int = No
         wom_total = mapped["skills"]["total_level"]
         if abs(total_level - wom_total) > 1:
             return await interaction.followup.send(
-                f"❌ The total level you entered ({total_level}) does not match WOM ({wom_total}). "
-                "Please update your WOM account first."
+                f"❌ The total level you entered ({total_level}) does not match WOM ({wom_total}). Please update your WOM account first."
             )
         mapped["skills"]["total_level"] = total_level
 
@@ -181,15 +181,14 @@ async def link(interaction: discord.Interaction, rsn: str, total_level: int = No
         wom_combat = mapped["skills"]["combat_level"]
         if abs(combat_level - wom_combat) > 1:
             return await interaction.followup.send(
-                f"❌ The combat level you entered ({combat_level}) does not match WOM ({wom_combat}). "
-                "Please update your WOM account first."
+                f"❌ The combat level you entered ({combat_level}) does not match WOM ({wom_combat}). Please update your WOM account first."
             )
         mapped["skills"]["combat_level"] = combat_level
 
     points = calculate_points(mapped)
     discord_id = str(interaction.user.id)
     await database.link_player(discord_id, rsn)
-    await database.update_points(discord_id, points, 0)
+    await database.update_points(discord_id, points, mapped.get("donations",0))
 
     ladder_name = get_ladder_rank(points)
 
@@ -203,7 +202,7 @@ async def link(interaction: discord.Interaction, rsn: str, total_level: int = No
     if all(level >= 90 for k, level in s.items() if k not in ["total_level","combat_level"]): prestige_awards.append("Raider")
     if a.get("infernal_cape"): prestige_awards.append("TzKal")
 
-    donator_name = None
+    donator_name = get_donator_rank(mapped.get("donations",0))
     await ensure_roles_exist(interaction.guild)
     await assign_roles(interaction.user, ladder_name, prestige_awards, donator_name)
 
@@ -214,7 +213,83 @@ async def link(interaction: discord.Interaction, rsn: str, total_level: int = No
         f"Donator: {donator_name if donator_name else 'None'}"
     )
 
-# ===== TODO: add the other commands (/update, /points, /addpoints, /dono) here using same pattern with English messages =====
+# --- /update command ---
+@tree.command(name="update", description="Update your linked OSRS account")
+async def update(interaction: discord.Interaction):
+    await interaction.response.defer(thinking=True)
+    discord_id = str(interaction.user.id)
+    rsn = await database.get_rsn(discord_id)
+    if not rsn:
+        return await interaction.followup.send("❌ You have not linked an account yet. Use `/link` first.")
+    wise_json = await fetch_wise_player(rsn)
+    if not wise_json:
+        return await interaction.followup.send(f"❌ Could not fetch data for RSN `{rsn}`.")
+    mapped = await map_wise_to_schema(wise_json)
+    points = calculate_points(mapped)
+    await database.update_points(discord_id, points, mapped.get("donations",0))
+    ladder_name = get_ladder_rank(points)
+
+    prestige_awards = []
+    a = mapped.get("achievements", {})
+    s = mapped.get("skills", {})
+    if a.get("quest_cape"): prestige_awards.append("Quester")
+    if s.get("combat_level",0) >= 126: prestige_awards.append("Gamer")
+    if a.get("diary_cape"): prestige_awards.append("Achiever")
+    if a.get("max_cape"): prestige_awards.append("Maxed")
+    if all(level >= 90 for k, level in s.items() if k not in ["total_level","combat_level"]): prestige_awards.append("Raider")
+    if a.get("infernal_cape"): prestige_awards.append("TzKal")
+
+    donator_name = get_donator_rank(mapped.get("donations",0))
+    await assign_roles(interaction.user, ladder_name, prestige_awards, donator_name)
+
+    await interaction.followup.send(
+        f"✅ {interaction.user.mention}'s account **{rsn}** has been updated.\n"
+        f"Points: **{points}** • Rank: **{ladder_name}** • "
+        f"Prestige: {', '.join(prestige_awards) if prestige_awards else 'None'} • "
+        f"Donator: {donator_name if donator_name else 'None'}"
+    )
+
+# --- /points command ---
+@tree.command(name="points", description="Check points of a player")
+@app_commands.describe(user="Optional: Mention a user to check their points")
+async def points(interaction: discord.Interaction, user: discord.Member = None):
+    target = user or interaction.user
+    discord_id = str(target.id)
+    points_val, donations_val = await database.get_points(discord_id)
+    ladder_name = get_ladder_rank(points_val)
+    donator_name = get_donator_rank(donations_val)
+    await interaction.response.send_message(
+        f"💠 {target.mention} • Points: **{points_val}** • Rank: **{ladder_name}** • "
+        f"Donator: {donator_name if donator_name else 'None'}"
+    )
+
+# --- /addpoints command ---
+@tree.command(name="addpoints", description="Add points to a player (Admin only)")
+@app_commands.describe(user="User to add points", points="Amount of points")
+@is_admin_or_owner()
+async def addpoints(interaction: discord.Interaction, user: discord.Member, points: int):
+    discord_id = str(user.id)
+    current_points, donations_val = await database.get_points(discord_id)
+    new_points = current_points + points
+    await database.update_points(discord_id, new_points, donations_val)
+    ladder_name = get_ladder_rank(new_points)
+    await interaction.response.send_message(
+        f"✅ Added **{points}** points to {user.mention}. New total: **{new_points}** • Rank: **{ladder_name}**"
+    )
+
+# --- /dono command ---
+@tree.command(name="dono", description="Register a donation for a user (Admin only)")
+@app_commands.describe(user="User who donated", amount="Donation amount")
+@is_admin_or_owner()
+async def dono(interaction: discord.Interaction, user: discord.Member, amount: int):
+    discord_id = str(user.id)
+    current_points, current_donations = await database.get_points(discord_id)
+    new_donations = current_donations + amount
+    await database.update_points(discord_id, current_points, new_donations)
+    donator_name = get_donator_rank(new_donations)
+    await interaction.response.send_message(
+        f"💰 {user.mention} donated **{amount}**. Total donations: **{new_donations}** • Donator rank: **{donator_name if donator_name else 'None'}**"
+    )
 
 # ===== On Ready =====
 @bot.event

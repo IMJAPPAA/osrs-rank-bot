@@ -1,6 +1,9 @@
 # pointsystem.py
 
 def merge_duplicate_bosses(bosses: dict) -> dict:
+    """
+    Combine duplicate or composite bosses so everything counts correctly.
+    """
     merged = bosses.copy()
     if "calvar'ion" in bosses or "vet'ion" in bosses:
         merged["calvar'ion & vet'ion"] = bosses.get("calvar'ion", 0) + bosses.get("vet'ion", 0)
@@ -81,4 +84,34 @@ def calculate_points(mapped: dict) -> int:
 
     # === ACHIEVEMENTS ===
     achievements = mapped.get("achievements", {})
-    if achievements.get
+    if achievements.get("quest_cape"): points += 75
+    if achievements.get("music_cape"): points += 25
+    if achievements.get("diary_cape"): points += 100
+    if achievements.get("max_cape"): points += 300
+    if achievements.get("infernal_cape"): points += 200
+
+    # === PETS ===
+    pets = mapped.get("pets", {})
+    points += pets.get("skilling", 0) * 25
+    points += pets.get("boss", 0) * 50
+    points += pets.get("raids", 0) * 75
+
+    # === EVENTS ===
+    events = mapped.get("events", {})
+    points += events.get("pvm_participations", 0) * 10
+    points += events.get("event_wins", 0) * 15
+
+    # === DONATIONS ===
+    donations = mapped.get("donations", 0)
+    if 1 <= donations < 25_000_000:
+        points += 10
+    elif 25_000_000 <= donations < 50_000_000:
+        points += 20
+    elif 50_000_000 <= donations < 100_000_000:
+        points += 40
+    elif 100_000_000 <= donations < 200_000_000:
+        points += 80
+    elif donations >= 200_000_000:
+        points += 150
+
+    return points
