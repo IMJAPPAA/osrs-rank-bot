@@ -25,7 +25,7 @@ def merge_duplicate_bosses(bosses: dict) -> dict:
 
 def calculate_points(mapped: dict) -> int:
     """
-    Calculate total points for a player based on skills, bosses, diaries, achievements, raids, pets, and events.
+    Calculate total points for a player based on skills, bosses, diaries, achievements, pets, events, and donations.
     """
     points = 0
 
@@ -53,7 +53,7 @@ def calculate_points(mapped: dict) -> int:
     if total_level >= 2277:
         points += 200
 
-    # === BOSSES ===
+    # === BOSSES & RAIDS ===
     boss_points = {
         "barrows": 50, "scurrius": 50, "giant mole": 50, "deranged archaeologist": 50,
         "moons of peril": 75, "kalphite queen": 100, "the hueycoatl": 150,
@@ -70,25 +70,21 @@ def calculate_points(mapped: dict) -> int:
         "araxxor": 150, "thermonuclear": 200, "alchemical hydra": 175,
         "crystalline hunleff": 50, "corrupted hunleff": 75, "tztok-jad": 100, "tzkal-zuk": 150,
         "sol heredit": 125, "tempoross": 50, "wintertodt": 50, "zalcano": 75,
+        # Raids
         "cox normal": 75, "toa normal": 75, "tob normal": 75,
-        "cox challenge mode": 150, "toa expert 300-450 inv": 100, "toa expert 450+ inv": 150,
-        "tob hard mode": 175,
+        "cox challenge mode": 150, "toa expert 300-450 inv": 100,
+        "toa expert 450+ inv": 150, "tob hard mode": 175,
     }
 
     merged_bosses = merge_duplicate_bosses(mapped.get("bosses", {}))
     for boss, pts_per_kc in boss_points.items():
         kc = merged_bosses.get(boss, 0)
-        points += kc * pts_per_kc
 
-    # === RAIDS ===
-    raids = mapped.get("raids", {})
-    points += raids.get("cox_normal", 0) * 75
-    points += raids.get("toa_normal", 0) * 75
-    points += raids.get("tob_normal", 0) * 75
-    points += raids.get("cox_challenge_mode", 0) * 150
-    points += raids.get("toa_expert_300-450_inv", 0) * 100
-    points += raids.get("toa_expert_450+_inv", 0) * 150
-    points += raids.get("tob_hard_mode", 0) * 175
+        # Raids per 10 KC, alles andere per 100 KC
+        if boss.startswith("cox") or boss.startswith("toa") or boss.startswith("tob"):
+            points += (kc // 10) * pts_per_kc
+        else:
+            points += (kc // 100) * pts_per_kc
 
     # === DIARIES ===
     diaries = mapped.get("diaries", {})
