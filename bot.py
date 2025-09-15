@@ -35,7 +35,7 @@ PRESTIGE_ROLES = [
 ]
 
 DONATOR_ROLES = [
-    (0, 25_000_000, "Protector"),
+    (1, 25_000_000, "Protector"),  # aangepast: start bij 1
     (25_000_000, 100_000_000, "Guardian"),
     (100_000_000, 200_000_000, "Templar"),
     (200_000_000, float("inf"), "Beast"),
@@ -116,7 +116,7 @@ async def ensure_roles_exist(guild: discord.Guild):
     return created
 
 async def assign_roles(member: discord.Member, ladder_name: str, prestige_list: list[str], donator_name: str):
-    # Remove old ladder
+    # Ladder
     ladder_names = [r[2] for r in RANKS]
     to_remove = [r for r in member.roles if r.name in ladder_names]
     if to_remove:
@@ -274,7 +274,7 @@ async def on_ready():
         created = await ensure_roles_exist(guild)
         if created:
             print(f"Created roles in {guild.name}: {created}")
-    print(f"✅ Bot online as {bot.user} and commands synced globally")
+    print(f"✅ Bot online als {bot.user} en commands globally gesynced")
 
 # ===== Start Bot =====
 if not DISCORD_TOKEN:
