@@ -56,11 +56,34 @@ async def get_player(discord_id):
         ) as cur:
             return await cur.fetchone()
 
+# ===== Get points only =====
+async def get_points(discord_id):
+    player = await get_player(discord_id)
+    if player:
+        return player[1]  # points
+    return 0
+
+# ===== Get donations only =====
+async def get_donations(discord_id):
+    player = await get_player(discord_id)
+    if player:
+        return player[2]  # donations
+    return 0
+
 # ===== Get leaderboard =====
 async def get_leaderboard(limit=10):
     async with aiosqlite.connect(DB_NAME) as db:
         async with db.execute(
             "SELECT rsn, points, donations FROM players ORDER BY points DESC LIMIT ?",
+            (limit,)
+        ) as cur:
+            return await cur.fetchall()
+
+# ===== Get donator leaderboard =====
+async def get_donator_leaderboard(limit=10):
+    async with aiosqlite.connect(DB_NAME) as db:
+        async with db.execute(
+            "SELECT rsn, donations FROM players ORDER BY donations DESC LIMIT ?",
             (limit,)
         ) as cur:
             return await cur.fetchall()
