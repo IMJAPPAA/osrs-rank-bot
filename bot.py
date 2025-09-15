@@ -6,14 +6,15 @@ sys.modules['audioop'] = types.ModuleType('audioop')
 import os, asyncio, requests, discord, urllib.parse
 from discord.ext import commands
 from discord import app_commands
-import database
-from pointsystem import calculate_points
+import database  # jouw database.py
+from pointsystem import calculate_points  # jouw puntensysteem
 
 # ===== Config =====
 DISCORD_TOKEN = os.getenv("DISCORD_TOKEN")
 WISE_API = "https://api.wiseoldman.net/v2/players/"
 
 # ===== Ladder, Prestige & Donator Roles =====
+# Ladder Ranks: (min_points, max_points, name)
 RANKS = [
     (0, 999, "Mentor"),
     (1000, 2499, "Prefect"),
@@ -25,6 +26,7 @@ RANKS = [
     (20000, float("inf"), "Zenyte"),
 ]
 
+# Prestige Roles: (name, requirement)
 PRESTIGE_ROLES = [
     ("Quester", "Quest Cape"),
     ("Gamer", "Combat level 126"),
@@ -34,6 +36,7 @@ PRESTIGE_ROLES = [
     ("TzKal", "Infernal Cape"),
 ]
 
+# Donator Roles: (min_donation, max_donation, name)
 DONATOR_ROLES = [
     (0, 25_000_000, "Protector"),
     (25_000_000, 100_000_000, "Guardian"),
@@ -186,7 +189,9 @@ async def update(interaction: discord.Interaction, rsn: str = None, donations: i
         await database.link_player(discord_id, target_rsn)
     await database.update_points(discord_id, total_points)
 
+    # Ladder rank
     ladder_name = get_ladder_rank(total_points)
+    # Prestige awards
     prestige_awards = []
     a = mapped.get("achievements", {})
     s = mapped.get("skills", {})
@@ -204,6 +209,7 @@ async def update(interaction: discord.Interaction, rsn: str = None, donations: i
     if a.get("infernal_cape"):
         prestige_awards.append("TzKal")
 
+    # Donator rank
     donator_name = get_donator_rank(donations)
 
     await ensure_roles_exist(interaction.guild)
@@ -240,6 +246,7 @@ async def addpoints(interaction: discord.Interaction, member: discord.Member, po
     mapped = await map_wise_to_schema(wise_json) if wise_json else {}
     ladder_name = get_ladder_rank(new_points)
 
+    # Prestige awards
     prestige_awards = []
     a = mapped.get("achievements", {})
     s = mapped.get("skills", {})
@@ -260,11 +267,13 @@ async def addpoints(interaction: discord.Interaction, member: discord.Member, po
     donator_name = get_donator_rank(donations)
     await ensure_roles_exist(member.guild)
     await assign_roles(member, ladder_name, prestige_awards, donator_name)
+
     await interaction.followup.send(
         f"✅ {points} points added to {member.mention}. Total points: {new_points} • "
         f"Donator: {donator_name if donator_name else 'None'}"
     )
 
+# ===== New Donator Command =====
 @tree.command(name="dono", description="Set a user's donator amount and assign rank (Admin/Owner only)")
 @is_admin_or_owner()
 async def dono(interaction: discord.Interaction, member: discord.Member, amount: int):
@@ -274,11 +283,13 @@ async def dono(interaction: discord.Interaction, member: discord.Member, amount:
     if not donator_name:
         return await interaction.followup.send(f"❌ Could not determine donator rank for amount {amount}")
 
+    # Remove old donator roles
     donator_names = [r[2] for r in DONATOR_ROLES]
     old_roles = [r for r in member.roles if r.name in donator_names]
     if old_roles:
         await member.remove_roles(*old_roles)
 
+    # Assign new donator role
     role = discord.utils.get(member.guild.roles, name=donator_name)
     if role and role not in member.roles:
         await member.add_roles(role)
