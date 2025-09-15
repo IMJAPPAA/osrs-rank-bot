@@ -14,26 +14,34 @@ DISCORD_TOKEN = os.getenv("DISCORD_TOKEN")
 WISE_API = "https://api.wiseoldman.net/v2/players/"
 
 # ===== Ladder, Prestige & Donator Roles =====
+# Ladder Ranks: (min_points, max_points, name)
 RANKS = [
-    (0, "Mentor"),
-    (1000, "Prefect"),
-    (2500, "Senator"),
-    (5000, "Monarch"),
-    (7500, "Diamond"),
-    (10000, "Dragonstone"),
-    (15000, "Onyx"),
-    (20000, "Zenyte"),
+    (0, 999, "Mentor"),
+    (1000, 2499, "Prefect"),
+    (2500, 4999, "Senator"),
+    (5000, 7499, "Monarch"),
+    (7500, 9999, "Diamond"),
+    (10000, 14999, "Dragonstone"),
+    (15000, 19999, "Onyx"),
+    (20000, float("inf"), "Zenyte"),
 ]
 
+# Prestige Roles: (name, requirement)
 PRESTIGE_ROLES = [
-    "Gamer", "Achiever", "Quester", "Raider", "TzKal", "Maxed"
+    ("Quester", "Quest Cape"),
+    ("Gamer", "Combat level 126"),
+    ("Achiever", "Diary Cape"),
+    ("Maxed", "Max Cape"),
+    ("Raider", "Base 90 all stats"),
+    ("TzKal", "Infernal Cape"),
 ]
 
+# Donator Roles: (min_donation, max_donation, name)
 DONATOR_ROLES = [
     (0, 25_000_000, "Protector"),
     (25_000_000, 100_000_000, "Guardian"),
     (100_000_000, 200_000_000, "Templar"),
-    (200_000_000, float("inf"), "Beast")
+    (200_000_000, float("inf"), "Beast"),
 ]
 
 # ===== Bot & Tree =====
@@ -43,11 +51,10 @@ tree = bot.tree
 
 # ===== Helpers =====
 def get_ladder_rank(points):
-    rank = "Unranked"
-    for threshold, name in RANKS:
-        if points >= threshold:
-            rank = name
-    return rank
+    for lower, upper, name in RANKS:
+        if lower <= points <= upper:
+            return name
+    return "Unranked"
 
 def get_donator_rank(donation_total):
     for lower, upper, name in DONATOR_ROLES:
@@ -72,6 +79,7 @@ async def map_wise_to_schema(wise_json: dict):
     data = {"bosses": {}, "diaries": {}, "achievements": {}, "skills": {}, "pets": {}}
     levels = wise_json.get("levels") or wise_json.get("experience") or {}
     data["skills"]["total_level"] = int(levels.get("overall", {}).get("level", 0) or 0)
+    data["skills"]["combat_level"] = int(levels.get("combat", {}).get("level", 0) or 0)
     ninetynines = sum(1 for v in levels.values() if isinstance(v, dict) and v.get("level",0)>=99)
     data["skills"]["first_99"] = ninetynines>=1
     data["skills"]["extra_99s"] = max(0, ninetynines-1)
@@ -92,6 +100,7 @@ async def map_wise_to_schema(wise_json: dict):
     data["achievements"]["music_cape"] = bool(wise_json.get("hasMusicCape") or achievements.get("musicCape"))
     data["achievements"]["diary_cape"] = bool(achievements.get("diaryCape") or wise_json.get("hasDiaryCape"))
     data["achievements"]["max_cape"] = bool(achievements.get("maxCape") or wise_json.get("isMaxed"))
+    data["achievements"]["infernal_cape"] = bool(achievements.get("infernalCape"))
 
     pets = wise_json.get("pets") or {}
     data["pets"]["skilling"] = int(pets.get("skilling",0) or 0)
@@ -104,12 +113,12 @@ async def ensure_roles_exist(guild: discord.Guild):
     existing = {r.name: r for r in guild.roles}
     created = []
     # Ladder
-    for _, name in RANKS:
+    for _, _, name in RANKS:
         if name not in existing:
             role = await guild.create_role(name=name)
             created.append(name)
     # Prestige
-    for name in PRESTIGE_ROLES:
+    for name, _ in PRESTIGE_ROLES:
         if name not in existing:
             role = await guild.create_role(name=name)
             created.append(name)
@@ -122,7 +131,7 @@ async def ensure_roles_exist(guild: discord.Guild):
 
 async def assign_roles(member: discord.Member, ladder_name: str, prestige_list: list[str], donator_name: str):
     # Ladder roles
-    ladder_names = [r[1] for r in RANKS]
+    ladder_names = [r[2] for r in RANKS]
     to_remove = [r for r in member.roles if r.name in ladder_names]
     if to_remove:
         await member.remove_roles(*to_remove)
@@ -131,7 +140,7 @@ async def assign_roles(member: discord.Member, ladder_name: str, prestige_list: 
         await member.add_roles(ladder_role)
 
     # Prestige roles
-    for pname in PRESTIGE_ROLES:
+    for pname, _ in PRESTIGE_ROLES:
         role = discord.utils.get(member.guild.roles, name=pname)
         if role and pname in prestige_list and role not in member.roles:
             await member.add_roles(role)
@@ -185,20 +194,31 @@ async def update(interaction: discord.Interaction, rsn: str = None, donations: i
     # Prestige awards
     prestige_awards = []
     a = mapped.get("achievements", {})
-    d = mapped.get("diaries", {})
     s = mapped.get("skills", {})
-    p = mapped.get("pets", {})
-    if a.get("quest_cape"): prestige_awards.append("Quester")
-    if a.get("music_cape"): prestige_awards.append("Gamer")
-    if a.get("diary_cape"): prestige_awards.append("Achiever")
-    if a.get("max_cape"): prestige_awards.append("Maxed")
-    if s.get("total_level",0) >= 126: prestige_awards.append("Raider")
+
+    if a.get("quest_cape"):
+        prestige_awards.append("Quester")
+    if s.get("combat_level", 0) >= 126:
+        prestige_awards.append("Gamer")
+    if a.get("diary_cape"):
+        prestige_awards.append("Achiever")
+    if a.get("max_cape"):
+        prestige_awards.append("Maxed")
+    if all(level >= 90 for key, level in s.items() if key not in ["total_level", "combat_level"]):
+        prestige_awards.append("Raider")
+    if a.get("infernal_cape"):
+        prestige_awards.append("TzKal")
+
     # Donator rank
     donator_name = get_donator_rank(donations)
 
     await ensure_roles_exist(interaction.guild)
     await assign_roles(interaction.user, ladder_name, prestige_awards, donator_name)
-    await interaction.followup.send(f"✅ {interaction.user.mention} — Points: **{total_points}** • Rank: **{ladder_name}** • Prestige: {', '.join(prestige_awards) if prestige_awards else 'None'} • Donator: {donator_name if donator_name else 'None'}")
+    await interaction.followup.send(
+        f"✅ {interaction.user.mention} — Points: **{total_points}** • Rank: **{ladder_name}** • "
+        f"Prestige: {', '.join(prestige_awards) if prestige_awards else 'None'} • "
+        f"Donator: {donator_name if donator_name else 'None'}"
+    )
 
 @tree.command(name="points", description="Check points and rank")
 async def points(interaction: discord.Interaction, member: discord.Member = None):
@@ -230,17 +250,51 @@ async def addpoints(interaction: discord.Interaction, member: discord.Member, po
     prestige_awards = []
     a = mapped.get("achievements", {})
     s = mapped.get("skills", {})
-    if a.get("quest_cape"): prestige_awards.append("Quester")
-    if a.get("music_cape"): prestige_awards.append("Gamer")
-    if a.get("diary_cape"): prestige_awards.append("Achiever")
-    if a.get("max_cape"): prestige_awards.append("Maxed")
-    if s.get("total_level",0) >= 126: prestige_awards.append("Raider")
+
+    if a.get("quest_cape"):
+        prestige_awards.append("Quester")
+    if s.get("combat_level", 0) >= 126:
+        prestige_awards.append("Gamer")
+    if a.get("diary_cape"):
+        prestige_awards.append("Achiever")
+    if a.get("max_cape"):
+        prestige_awards.append("Maxed")
+    if all(level >= 90 for key, level in s.items() if key not in ["total_level", "combat_level"]):
+        prestige_awards.append("Raider")
+    if a.get("infernal_cape"):
+        prestige_awards.append("TzKal")
 
     donator_name = get_donator_rank(donations)
     await ensure_roles_exist(member.guild)
     await assign_roles(member, ladder_name, prestige_awards, donator_name)
 
-    await interaction.followup.send(f"✅ {points} points added to {member.mention}. Total points: {new_points} • Donator: {donator_name if donator_name else 'None'}")
+    await interaction.followup.send(
+        f"✅ {points} points added to {member.mention}. Total points: {new_points} • "
+        f"Donator: {donator_name if donator_name else 'None'}"
+    )
+
+# ===== New Donator Command =====
+@tree.command(name="dono", description="Set a user's donator amount and assign rank (Admin/Owner only)")
+@is_admin_or_owner()
+async def dono(interaction: discord.Interaction, member: discord.Member, amount: int):
+    await interaction.response.defer(thinking=True)
+
+    donator_name = get_donator_rank(amount)
+    if not donator_name:
+        return await interaction.followup.send(f"❌ Could not determine donator rank for amount {amount}")
+
+    # Remove old donator roles
+    donator_names = [r[2] for r in DONATOR_ROLES]
+    old_roles = [r for r in member.roles if r.name in donator_names]
+    if old_roles:
+        await member.remove_roles(*old_roles)
+
+    # Assign new donator role
+    role = discord.utils.get(member.guild.roles, name=donator_name)
+    if role and role not in member.roles:
+        await member.add_roles(role)
+
+    await interaction.followup.send(f"✅ {member.mention} is now **{donator_name}** (Donated: {amount:,})")
 
 # ===== On Ready =====
 @bot.event
