@@ -250,15 +250,21 @@ async def update(interaction: discord.Interaction):
     player = await database.get_player(discord_id)
     if not player:
         return await interaction.response.send_message("❌ You have not linked your RSN yet.")
-    rsn, _, _ = player
+
+    rsn, current_points, donations = player
     wise_json = await fetch_wise_player(rsn)
     if not wise_json:
         return await interaction.response.send_message(f"❌ Could not fetch data for RSN `{rsn}`.")
+
     mapped = await map_wise_to_schema(wise_json)
-    points = calculate_points(mapped)
-    donations = mapped.get("donations", 0)
-    await database.update_points(discord_id, points, donations)
-    await interaction.response.send_message(f"✅ Updated points: **{points}**, Donations: **{donations}**")
+    points_from_wom = calculate_points(mapped)
+
+    # Bereken handmatig toegevoegde punten
+    manual_points = current_points - points_from_wom if current_points > points_from_wom else 0
+    total_points = points_from_wom + manual_points
+
+    await database.update_points(discord_id, total_points, donations)
+    await interaction.response.send_message(f"✅ Updated points: **{total_points}**, Donations: **{donations}**")
 
 # ===== /addpoints =====
 @tree.command(name="addpoints", description="Admin command: Add points to a user")
@@ -269,9 +275,11 @@ async def addpoints(interaction: discord.Interaction, user: discord.User, points
     player = await database.get_player(discord_id)
     if not player:
         return await interaction.response.send_message("❌ This user has not linked their RSN.")
+    
     rsn, current_points, donations = player
     new_points = current_points + points
-    await database.update_points(discord_id, new_points)
+    await database.update_points(discord_id, new_points, donations)
+    
     await interaction.response.send_message(f"✅ Added {points} points to {user.display_name}. Total: {new_points}")
 
 # ===== /dono =====
