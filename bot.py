@@ -128,6 +128,7 @@ async def ensure_roles_exist(guild: discord.Guild):
     return created
 
 async def assign_roles(member: discord.Member, ladder_name: str, prestige_list: list[str], donator_name: str):
+    # --- Ladder ---
     ladder_names = [r[2] for r in RANKS]
     to_remove = [r for r in member.roles if r.name in ladder_names]
     if to_remove:
@@ -136,15 +137,13 @@ async def assign_roles(member: discord.Member, ladder_name: str, prestige_list: 
     if ladder_role and ladder_role not in member.roles:
         await member.add_roles(ladder_role)
 
+    # --- Prestige ---
     for pname, _ in PRESTIGE_ROLES:
         role = discord.utils.get(member.guild.roles, name=pname)
         if role and pname in prestige_list and role not in member.roles:
             await member.add_roles(role)
 
-    donator_names = [r[2] for r in DONATOR_ROLES]
-    old_roles = [r for r in member.roles if r.name in donator_names]
-    if old_roles:
-        await member.remove_roles(*old_roles)
+    # --- Donator (extra rol, ladder niet beïnvloeden) ---
     if donator_name:
         role = discord.utils.get(member.guild.roles, name=donator_name)
         if role and role not in member.roles:
