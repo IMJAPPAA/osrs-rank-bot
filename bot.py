@@ -76,7 +76,6 @@ async def map_wise_to_schema(wise_json: dict):
     """Improved mapping to internal schema for points calculation."""
     data = {"bosses": {}, "diaries": {}, "achievements": {}, "skills": {}, "pets": {}, "events": {}, "donations": 0}
 
-    # --- SKILLS ---
     levels = wise_json.get("levels") or wise_json.get("experience") or {}
     overall = levels.get("overall") or {}
     combat = levels.get("combat") or {}
@@ -87,12 +86,10 @@ async def map_wise_to_schema(wise_json: dict):
     data["skills"]["first_99"] = ninetynines >= 1
     data["skills"]["extra_99s"] = max(0, ninetynines - 1)
 
-    # --- BOSSES ---
     bosses = wise_json.get("bosses") or wise_json.get("bossRecords") or {}
     for b in bosses:
         data["bosses"][b.lower()] = int(bosses.get(b, 0) or 0)
 
-    # --- DIARIES ---
     diaries = wise_json.get("diaries") or {}
     data["diaries"]["easy"] = int(diaries.get("easy", 0) or 0)
     data["diaries"]["medium"] = int(diaries.get("medium", 0) or 0)
@@ -100,7 +97,6 @@ async def map_wise_to_schema(wise_json: dict):
     data["diaries"]["elite"] = int(diaries.get("elite", 0) or 0)
     data["diaries"]["all_completed"] = diaries.get("completed", False) or diaries.get("all", False)
 
-    # --- ACHIEVEMENTS ---
     achievements = wise_json.get("titles") or wise_json.get("achievements") or {}
     data["achievements"]["quest_cape"] = bool(wise_json.get("hasQuestCape") or achievements.get("questCape"))
     data["achievements"]["music_cape"] = bool(wise_json.get("hasMusicCape") or achievements.get("musicCape"))
@@ -108,18 +104,15 @@ async def map_wise_to_schema(wise_json: dict):
     data["achievements"]["max_cape"] = bool(achievements.get("maxCape") or wise_json.get("isMaxed"))
     data["achievements"]["infernal_cape"] = bool(achievements.get("infernalCape"))
 
-    # --- PETS ---
     pets = wise_json.get("pets") or {}
     data["pets"]["skilling"] = int(pets.get("skilling", 0) or 0)
     data["pets"]["boss"] = int(pets.get("boss", 0) or 0)
     data["pets"]["raids"] = int(pets.get("raids", 0) or 0)
 
-    # --- EVENTS ---
     events = wise_json.get("events") or {}
     data["events"]["pvm_participations"] = int(events.get("pvm_participations", 0) or 0)
     data["events"]["event_wins"] = int(events.get("event_wins", 0) or 0)
 
-    # --- DONATIONS ---
     donations = wise_json.get("donations") or 0
     data["donations"] = int(donations)
 
@@ -135,7 +128,6 @@ async def ensure_roles_exist(guild: discord.Guild):
     return created
 
 async def assign_roles(member: discord.Member, ladder_name: str, prestige_list: list[str], donator_name: str):
-    # Ladder
     ladder_names = [r[2] for r in RANKS]
     to_remove = [r for r in member.roles if r.name in ladder_names]
     if to_remove:
@@ -144,13 +136,11 @@ async def assign_roles(member: discord.Member, ladder_name: str, prestige_list: 
     if ladder_role and ladder_role not in member.roles:
         await member.add_roles(ladder_role)
 
-    # Prestige
     for pname, _ in PRESTIGE_ROLES:
         role = discord.utils.get(member.guild.roles, name=pname)
         if role and pname in prestige_list and role not in member.roles:
             await member.add_roles(role)
 
-    # Donator
     donator_names = [r[2] for r in DONATOR_ROLES]
     old_roles = [r for r in member.roles if r.name in donator_names]
     if old_roles:
@@ -205,7 +195,6 @@ async def link(interaction: discord.Interaction, rsn: str, total_level: int = No
 
     ladder_name = get_ladder_rank(points)
 
-    # Determine prestige
     prestige_awards = []
     a = mapped.get("achievements", {})
     s = mapped.get("skills", {})
@@ -259,12 +248,30 @@ async def update(interaction: discord.Interaction):
     mapped = await map_wise_to_schema(wise_json)
     points_from_wom = calculate_points(mapped)
 
-    # Bereken handmatig toegevoegde punten
     manual_points = current_points - points_from_wom if current_points > points_from_wom else 0
     total_points = points_from_wom + manual_points
 
     await database.update_points(discord_id, total_points, donations)
-    await interaction.response.send_message(f"✅ Updated points: **{total_points}**, Donations: **{donations}**")
+
+    ladder_name = get_ladder_rank(total_points)
+    prestige_awards = []
+    a = mapped.get("achievements", {})
+    s = mapped.get("skills", {})
+    if a.get("quest_cape"): prestige_awards.append("Quester")
+    if s.get("combat_level", 0) >= 126: prestige_awards.append("Gamer")
+    if a.get("diary_cape"): prestige_awards.append("Achiever")
+    if a.get("max_cape"): prestige_awards.append("Maxed")
+    if all(level >= 90 for k, level in s.items() if k not in ["total_level","combat_level"]): prestige_awards.append("Raider")
+    if a.get("infernal_cape"): prestige_awards.append("TzKal")
+
+    donator_name = get_donator_rank(donations)
+
+    await ensure_roles_exist(interaction.guild)
+    await assign_roles(interaction.user, ladder_name, prestige_awards, donator_name)
+
+    await interaction.response.send_message(
+        f"✅ Updated points: **{total_points}**, Rank: **{ladder_name}**, Donations: **{donations}**"
+    )
 
 # ===== /addpoints =====
 @tree.command(name="addpoints", description="Admin command: Add points to a user")
@@ -279,8 +286,29 @@ async def addpoints(interaction: discord.Interaction, user: discord.User, points
     rsn, current_points, donations = player
     new_points = current_points + points
     await database.update_points(discord_id, new_points, donations)
-    
-    await interaction.response.send_message(f"✅ Added {points} points to {user.display_name}. Total: {new_points}")
+
+    ladder_name = get_ladder_rank(new_points)
+    wise_json = await fetch_wise_player(rsn)
+    mapped = await map_wise_to_schema(wise_json)
+
+    prestige_awards = []
+    a = mapped.get("achievements", {})
+    s = mapped.get("skills", {})
+    if a.get("quest_cape"): prestige_awards.append("Quester")
+    if s.get("combat_level", 0) >= 126: prestige_awards.append("Gamer")
+    if a.get("diary_cape"): prestige_awards.append("Achiever")
+    if a.get("max_cape"): prestige_awards.append("Maxed")
+    if all(level >= 90 for k, level in s.items() if k not in ["total_level","combat_level"]): prestige_awards.append("Raider")
+    if a.get("infernal_cape"): prestige_awards.append("TzKal")
+
+    donator_name = get_donator_rank(donations)
+
+    await ensure_roles_exist(interaction.user.guild)
+    await assign_roles(interaction.user, ladder_name, prestige_awards, donator_name)
+
+    await interaction.response.send_message(
+        f"✅ Added {points} points to {user.display_name}. Total: {new_points}, Rank: {ladder_name}"
+    )
 
 # ===== /dono =====
 @tree.command(name="dono", description="Admin command: Add donations to a user")
@@ -294,6 +322,26 @@ async def dono(interaction: discord.Interaction, user: discord.User, amount: int
     rsn, points, current_dono = player
     new_dono = (current_dono or 0) + amount
     await database.update_points(discord_id, None, new_dono)
+
+    ladder_name = get_ladder_rank(points)
+    wise_json = await fetch_wise_player(rsn)
+    mapped = await map_wise_to_schema(wise_json)
+
+    prestige_awards = []
+    a = mapped.get("achievements", {})
+    s = mapped.get("skills", {})
+    if a.get("quest_cape"): prestige_awards.append("Quester")
+    if s.get("combat_level", 0) >= 126: prestige_awards.append("Gamer")
+    if a.get("diary_cape"): prestige_awards.append("Achiever")
+    if a.get("max_cape"): prestige_awards.append("Maxed")
+    if all(level >= 90 for k, level in s.items() if k not in ["total_level","combat_level"]): prestige_awards.append("Raider")
+    if a.get("infernal_cape"): prestige_awards.append("TzKal")
+
+    donator_name = get_donator_rank(new_dono)
+
+    await ensure_roles_exist(interaction.user.guild)
+    await assign_roles(interaction.user, ladder_name, prestige_awards, donator_name)
+
     await interaction.response.send_message(f"✅ Added {amount} donations to {user.display_name}. Total: {new_dono}")
 
 # ===== On Ready =====
