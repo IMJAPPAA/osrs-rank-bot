@@ -3,7 +3,7 @@ import sys, types
 sys.modules['audioop'] = types.ModuleType('audioop')
 
 # ===== Imports =====
-import os, asyncio, requests, discord, urllib.parse
+import os, asyncio, requests, discord, urllib.parse, json
 from discord.ext import commands
 from discord import app_commands
 import database
@@ -90,8 +90,7 @@ async def map_wise_to_schema(wise_json: dict):
     # Skills
     skills = snapshot.get("skills", {})
     for skill, info in skills.items():
-        level = info.get("level", 0)
-        data["skills"][skill] = level
+        data["skills"][skill.lower()] = info.get("level", 0)
     data["skills"]["total_level"] = skills.get("overall", {}).get("level", 0)
     data["skills"]["combat_level"] = snapshot.get("combatLevel") or 0
     ninetynines = sum(1 for lvl in data["skills"].values() if isinstance(lvl, int) and lvl >= 99)
@@ -101,7 +100,7 @@ async def map_wise_to_schema(wise_json: dict):
     # Bosses
     bosses = snapshot.get("bosses", {})
     for boss, info in bosses.items():
-        data["bosses"][boss.lower()] = info.get("kills", 0)
+        data["bosses"][boss.lower().replace("'", "").replace(" ", "_")] = info.get("kills", 0)
 
     # Diaries
     diaries = snapshot.get("diaries", {})
@@ -175,8 +174,7 @@ async def link(interaction: discord.Interaction, rsn: str):
         return await interaction.followup.send(f"❌ Could not fetch data for RSN `{rsn}`.")
 
     mapped = await map_wise_to_schema(wise_json)
-    # Save boss KC at link moment
-    boss_kc_at_link = mapped.get("bosses", {}).copy()
+    boss_kc_at_link = mapped.get("bosses", {}).copy()  # Save KC at link
 
     discord_id = str(interaction.user.id)
     db_player = await database.get_player(discord_id)
@@ -213,7 +211,7 @@ async def link(interaction: discord.Interaction, rsn: str):
         f"Donator: {donator_name if donator_name else 'None'}"
     )
 
-# ===== update command with KC delta calculation =====
+# ===== update command =====
 @tree.command(name="update", description="Update your points")
 async def update(interaction: discord.Interaction):
     discord_id = str(interaction.user.id)
