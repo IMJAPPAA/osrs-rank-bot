@@ -1,5 +1,3 @@
-# pointsystem.py
-
 def merge_duplicate_bosses(bosses: dict) -> dict:
     """
     Combine duplicate or composite bosses so everything counts correctly.
@@ -17,6 +15,9 @@ def merge_duplicate_bosses(bosses: dict) -> dict:
 
 
 def calculate_points(mapped: dict) -> int:
+    """
+    Calculate only WOM points (Discord-earned points handled separately in DB).
+    """
     points = 0
 
     # === SKILLS ===
@@ -96,22 +97,7 @@ def calculate_points(mapped: dict) -> int:
     points += pets.get("boss", 0) * 50
     points += pets.get("raids", 0) * 75
 
-    # === EVENTS ===
-    events = mapped.get("events", {})
-    points += events.get("pvm_participations", 0) * 10
-    points += events.get("event_wins", 0) * 15
-
-    # === DONATIONS ===
-    donations = mapped.get("donations", 0)
-    if 1 <= donations < 25_000_000:
-        points += 10
-    elif 25_000_000 <= donations < 50_000_000:
-        points += 20
-    elif 50_000_000 <= donations < 100_000_000:
-        points += 40
-    elif 100_000_000 <= donations < 200_000_000:
-        points += 80
-    elif donations >= 200_000_000:
-        points += 150
+    # === EVENTS & DONATIONS ===
+    # NIET MEER IN WOM CALCULATIE, deze komen uit DB
 
     return points
