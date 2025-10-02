@@ -175,15 +175,18 @@ async def link(interaction: discord.Interaction, rsn: str):
         return await interaction.followup.send(f"❌ Could not fetch data for RSN `{rsn}`.")
 
     mapped = await map_wise_to_schema(wise_json)
-    wom_points = calculate_points(mapped)
+    # Save boss KC at link moment
+    boss_kc_at_link = mapped.get("bosses", {}).copy()
 
     discord_id = str(interaction.user.id)
     db_player = await database.get_player(discord_id)
     discord_points = db_player[1] if db_player else 0
     donations = db_player[2] if db_player else 0
+
+    wom_points = calculate_points(mapped, boss_kc_at_link)
     total_points = wom_points + discord_points
 
-    await database.link_player(discord_id, rsn)
+    await database.link_player(discord_id, rsn, json.dumps(boss_kc_at_link))
     await database.update_points(discord_id, total_points, donations)
 
     ladder_name = get_ladder_rank(total_points)
@@ -210,6 +213,7 @@ async def link(interaction: discord.Interaction, rsn: str):
         f"Donator: {donator_name if donator_name else 'None'}"
     )
 
+# ===== update command with KC delta calculation =====
 @tree.command(name="update", description="Update your points")
 async def update(interaction: discord.Interaction):
     discord_id = str(interaction.user.id)
@@ -217,14 +221,15 @@ async def update(interaction: discord.Interaction):
     if not player:
         return await interaction.response.send_message("❌ You have not linked your RSN yet.")
 
-    rsn, discord_points, donations = player
+    rsn, discord_points, donations, boss_kc_json = player
+    boss_kc_at_link = json.loads(boss_kc_json or "{}")
 
     wise_json = await fetch_wise_player(rsn)
     if not wise_json:
         return await interaction.response.send_message(f"❌ Could not fetch data for RSN `{rsn}`.")
 
     mapped = await map_wise_to_schema(wise_json)
-    wom_points = calculate_points(mapped)
+    wom_points = calculate_points(mapped, boss_kc_at_link)
 
     total_points = wom_points + discord_points
     await database.update_points(discord_id, total_points, donations)
@@ -250,44 +255,7 @@ async def update(interaction: discord.Interaction):
         f"✅ Updated points: **{total_points}**, Rank: **{ladder_name}**, Donations: **{donations}**"
     )
 
-@tree.command(name="points", description="Check your points")
-async def points(interaction: discord.Interaction, member: discord.Member = None):
-    member = member or interaction.user
-    player = await database.get_player(str(member.id))
-    if not player:
-        return await interaction.response.send_message("❌ Player not found.")
-    rsn, points_val, donations = player
-    ladder_name = get_ladder_rank(points_val)
-    donator_name = get_donator_rank(donations)
-    await interaction.response.send_message(
-        f"**{member.display_name}** - RSN: {rsn}\nPoints: {points_val} • Rank: {ladder_name} • Donations: {donations} • Donator: {donator_name or 'None'}"
-    )
-
-@tree.command(name="addpoints", description="Add Discord points to a player")
-@is_admin_or_owner()
-async def addpoints(interaction: discord.Interaction, member: discord.Member, amount: int):
-    discord_id = str(member.id)
-    player = await database.get_player(discord_id)
-    if not player:
-        return await interaction.response.send_message("❌ Player not found.")
-    rsn, points_val, donations = player
-    points_val += amount
-    await database.update_points(discord_id, points_val, donations)
-    await interaction.response.send_message(f"✅ Added {amount} points to {member.display_name}. Total: {points_val}")
-
-@tree.command(name="dono", description="Add donation points")
-@is_admin_or_owner()
-async def dono(interaction: discord.Interaction, member: discord.Member, amount: int):
-    discord_id = str(member.id)
-    player = await database.get_player(discord_id)
-    if not player:
-        return await interaction.response.send_message("❌ Player not found.")
-    rsn, points_val, donations = player
-    donations += amount
-    await database.update_points(discord_id, points_val, donations)
-    await interaction.response.send_message(f"✅ Added {amount} donations to {member.display_name}. Total: {donations}")
-
-# ===== On Ready =====
+# ===== Start Bot =====
 @bot.event
 async def on_ready():
     await database.init_db()
@@ -298,7 +266,6 @@ async def on_ready():
             print(f"Created roles in {guild.name}: {created}")
     print(f"✅ Bot online as {bot.user} and commands globally synced")
 
-# ===== Start Bot =====
 if not DISCORD_TOKEN:
     print("ERROR: DISCORD_TOKEN env var not set.")
 else:

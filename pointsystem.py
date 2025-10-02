@@ -3,10 +3,10 @@ def merge_duplicate_bosses(bosses: dict) -> dict:
     Combine duplicate or composite bosses so everything counts correctly.
     """
     merged = bosses.copy()
-    if "calvar'ion" in bosses or "vet'ion" in bosses:
-        merged["calvar'ion & vet'ion"] = bosses.get("calvar'ion", 0) + bosses.get("vet'ion", 0)
-        merged.pop("calvar'ion", None)
-        merged.pop("vet'ion", None)
+    if "calvarion" in bosses or "vetion" in bosses:
+        merged["calvarion & vetion"] = bosses.get("calvarion", 0) + bosses.get("vetion", 0)
+        merged.pop("calvarion", None)
+        merged.pop("vetion", None)
     if "spindel" in bosses or "venenatis" in bosses:
         merged["spindel & venenatis"] = bosses.get("spindel", 0) + bosses.get("venenatis", 0)
         merged.pop("spindel", None)
@@ -14,11 +14,13 @@ def merge_duplicate_bosses(bosses: dict) -> dict:
     return merged
 
 
-def calculate_points(mapped: dict) -> int:
+def calculate_points(mapped: dict, boss_kc_at_link: dict | None = None) -> int:
     """
-    Calculate only WOM points (Discord-earned points handled separately in DB).
+    Calculate WOM points.
+    Boss points are only given for KC above the link-moment KC.
     """
     points = 0
+    boss_kc_at_link = boss_kc_at_link or {}
 
     # === SKILLS ===
     skills = mapped.get("skills", {})
@@ -46,34 +48,37 @@ def calculate_points(mapped: dict) -> int:
 
     # === BOSSES & RAIDS ===
     boss_points = {
-        "barrows": 50, "scurrius": 50, "giant mole": 50, "deranged archaeologist": 50,
-        "moons of peril": 75, "kalphite queen": 100, "the hueycoatl": 150,
-        "corporeal beast": 200, "dagannoth supreme": 50, "dagannoth rex": 50, "dagannoth prime": 50,
-        "kree'arra": 100, "commander zilyana": 100, "general graardor": 100, "k'ril tsutsaroth": 100,
-        "nex": 200, "chaos fanatic": 40, "crazy archaeologist": 50, "scropia": 60,
-        "king black dragon": 100, "chaos elemental": 80, "calvar'ion & vet'ion": 75, "spindel & venenatis": 70,
-        "artio & callisto": 65, "obor": 50, "bryophyta": 50, "amoxliatl": 70, "royal titans": 90,
-        "doom of makhaiotl": 120, "zulrah": 100, "vorkath": 125, "phantom muspah": 100,
-        "the nightmare": 200, "phosani's nightmare": 200, "yama": 150, "sarachnis": 90,
-        "duke sucellus": 100, "the leviathan": 120, "the wisperer": 120, "vardorvis": 150,
-        "the mimic": 75, "hespori": 100, "skotizo": 120,
-        "grotesque guardians": 100, "abyssal sire": 100, "kraken": 80, "cerberus": 120,
-        "araxxor": 150, "thermonuclear": 200, "alchemical hydra": 175,
-        "crystalline hunleff": 50, "corrupted hunleff": 75, "tztok-jad": 100, "tzkal-zuk": 150,
-        "sol heredit": 125, "tempoross": 50, "wintertodt": 50, "zalcano": 75,
+        "barrows_chests": 50, "scurrius": 50, "giant_mole": 50, "deranged_archaeologist": 50,
+        "moons_of_peril": 75, "kalphite_queen": 100, "the_hueycoatl": 150,
+        "corporeal_beast": 200, "dagannoth_supreme": 50, "dagannoth_rex": 50, "dagannoth_prime": 50,
+        "kreearra": 100, "commander_zilyana": 100, "general_graardor": 100, "kril_tsutsaroth": 100,
+        "nex": 200, "chaos_fanatic": 40, "crazy_archaeologist": 50, "scorpia": 60,
+        "king_black_dragon": 100, "chaos_elemental": 80, "calvarion & vetion": 75, "spindel & venenatis": 70,
+        "artio & callisto": 65, "obor": 50, "bryophyta": 50, "amoxliatl": 70, "the_royal_titans": 90,
+        "doom_of_mokhaiotl": 120, "zulrah": 100, "vorkath": 125, "phantom_muspah": 100,
+        "nightmare": 200, "phosanis_nightmare": 200, "yama": 150, "sarachnis": 90,
+        "duke_sucellus": 100, "the_leviathan": 120, "the_whisperer": 120, "vardorvis": 150,
+        "mimic": 75, "hespori": 100, "skotizo": 120,
+        "grotesque_guardians": 100, "abyssal_sire": 100, "kraken": 80, "cerberus": 120,
+        "araxxor": 150, "thermonuclear": 200, "alchemical_hydra": 175,
+        "crystalline_hunleff": 50, "corrupted_hunleff": 75, "tztok_jad": 100, "tzkal_zuk": 150,
+        "sol_heredit": 125, "tempoross": 50, "wintertodt": 50, "zalcano": 75,
         # Raids
-        "cox normal": 75, "toa normal": 75, "tob normal": 75,
-        "cox challenge mode": 150, "toa expert 300-450 inv": 100,
-        "toa expert 450+ inv": 150, "tob hard mode": 175,
+        "cox_normal": 75, "toa_normal": 75, "tob_normal": 75,
+        "cox_challenge_mode": 150, "toa_expert_300_450_inv": 100,
+        "toa_expert_450_plus_inv": 150, "tob_hard_mode": 175,
     }
 
     merged_bosses = merge_duplicate_bosses(mapped.get("bosses", {}))
     for boss, pts_per_kc in boss_points.items():
-        kc = merged_bosses.get(boss, 0)
+        current_kc = merged_bosses.get(boss, 0)
+        start_kc = boss_kc_at_link.get(boss, 0)
+        kc_delta = max(0, current_kc - start_kc)
+
         if boss.startswith("cox") or boss.startswith("toa") or boss.startswith("tob"):
-            points += (kc // 10) * pts_per_kc
+            points += (kc_delta // 10) * pts_per_kc
         else:
-            points += (kc // 100) * pts_per_kc
+            points += (kc_delta // 100) * pts_per_kc
 
     # === DIARIES ===
     diaries = mapped.get("diaries", {})
@@ -96,8 +101,5 @@ def calculate_points(mapped: dict) -> int:
     points += pets.get("skilling", 0) * 25
     points += pets.get("boss", 0) * 50
     points += pets.get("raids", 0) * 75
-
-    # === EVENTS & DONATIONS ===
-    # NIET MEER IN WOM CALCULATIE, deze komen uit DB
 
     return points
