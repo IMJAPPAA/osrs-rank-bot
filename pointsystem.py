@@ -1,105 +1,111 @@
-def merge_duplicate_bosses(bosses: dict) -> dict:
-    """
-    Combine duplicate or composite bosses so everything counts correctly.
-    """
-    merged = bosses.copy()
-    if "calvarion" in bosses or "vetion" in bosses:
-        merged["calvarion & vetion"] = bosses.get("calvarion", 0) + bosses.get("vetion", 0)
-        merged.pop("calvarion", None)
-        merged.pop("vetion", None)
-    if "spindel" in bosses or "venenatis" in bosses:
-        merged["spindel & venenatis"] = bosses.get("spindel", 0) + bosses.get("venenatis", 0)
-        merged.pop("spindel", None)
-        merged.pop("venenatis", None)
-    return merged
+import aiosqlite
 
+DB_NAME = "players.db"
 
-def calculate_points(mapped: dict, boss_kc_at_link: dict | None = None) -> int:
-    """
-    Calculate WOM points.
-    Boss points are only given for KC above the link-moment KC.
-    """
-    points = 0
-    boss_kc_at_link = boss_kc_at_link or {}
+# ===== Initialize DB =====
+async def init_db():
+    async with aiosqlite.connect(DB_NAME) as db:
+        # Nieuwe structuur
+        await db.execute("""
+            CREATE TABLE IF NOT EXISTS players (
+                discord_id TEXT PRIMARY KEY,
+                rsn TEXT,
+                wom_points INTEGER DEFAULT 0,
+                discord_points INTEGER DEFAULT 0,
+                donations INTEGER DEFAULT 0,
+                boss_kc_at_link TEXT DEFAULT '{}'
+            )
+        """)
+        # Zorg dat oude installs veilig migreren
+        try:
+            await db.execute("ALTER TABLE players ADD COLUMN wom_points INTEGER DEFAULT 0")
+        except aiosqlite.OperationalError:
+            pass
+        try:
+            await db.execute("ALTER TABLE players ADD COLUMN discord_points INTEGER DEFAULT 0")
+        except aiosqlite.OperationalError:
+            pass
+        try:
+            await db.execute("ALTER TABLE players ADD COLUMN donations INTEGER DEFAULT 0")
+        except aiosqlite.OperationalError:
+            pass
+        try:
+            await db.execute("ALTER TABLE players ADD COLUMN boss_kc_at_link TEXT DEFAULT '{}' ")
+        except aiosqlite.OperationalError:
+            pass
 
-    # === SKILLS ===
-    skills = mapped.get("skills", {})
-    total_level = skills.get("total_level", 0)
-    combat_level = skills.get("combat_level", 0)
+        await db.commit()
 
-    if total_level < 1000:
-        points += 25
-    elif total_level < 1500:
-        points += 30
-    elif total_level < 1750:
-        points += 35
-    elif total_level < 2000:
-        points += 40
-    elif total_level < 2200:
-        points += 45
-    else:
-        points += 50
+# ===== Link RSN =====
+async def link_player(discord_id, rsn, boss_kc_at_link="{}"):
+    async with aiosqlite.connect(DB_NAME) as db:
+        await db.execute("""
+            INSERT INTO players (discord_id, rsn, wom_points, discord_points, donations, boss_kc_at_link)
+            VALUES (?, ?, 0, 0, 0, ?)
+            ON CONFLICT(discord_id) DO UPDATE SET
+                rsn=excluded.rsn,
+                boss_kc_at_link=excluded.boss_kc_at_link
+        """, (discord_id, rsn, boss_kc_at_link))
+        await db.commit()
 
-    if skills.get("first_99"):
-        points += 50
-    points += skills.get("extra_99s", 0) * 25
-    if total_level >= 2277:
-        points += 200
+# ===== Update fields =====
+async def update_points(discord_id, wom_points=None, discord_points=None, donations=None, boss_kc_at_link=None):
+    async with aiosqlite.connect(DB_NAME) as db:
+        query = "UPDATE players SET "
+        params = []
+        if wom_points is not None:
+            query += "wom_points=?, "
+            params.append(wom_points)
+        if discord_points is not None:
+            query += "discord_points=?, "
+            params.append(discord_points)
+        if donations is not None:
+            query += "donations=?, "
+            params.append(donations)
+        if boss_kc_at_link is not None:
+            query += "boss_kc_at_link=?, "
+            params.append(boss_kc_at_link)
+        if not params:
+            return
+        query = query.rstrip(", ") + " WHERE discord_id=?"
+        params.append(discord_id)
+        await db.execute(query, tuple(params))
+        await db.commit()
 
-    # === BOSSES & RAIDS ===
-    boss_points = {
-        "barrows_chests": 50, "scurrius": 50, "giant_mole": 50, "deranged_archaeologist": 50,
-        "moons_of_peril": 75, "kalphite_queen": 100, "the_hueycoatl": 150,
-        "corporeal_beast": 200, "dagannoth_supreme": 50, "dagannoth_rex": 50, "dagannoth_prime": 50,
-        "kreearra": 100, "commander_zilyana": 100, "general_graardor": 100, "kril_tsutsaroth": 100,
-        "nex": 200, "chaos_fanatic": 40, "crazy_archaeologist": 50, "scorpia": 60,
-        "king_black_dragon": 100, "chaos_elemental": 80, "calvarion & vetion": 75, "spindel & venenatis": 70,
-        "artio & callisto": 65, "obor": 50, "bryophyta": 50, "amoxliatl": 70, "the_royal_titans": 90,
-        "doom_of_mokhaiotl": 120, "zulrah": 100, "vorkath": 125, "phantom_muspah": 100,
-        "nightmare": 200, "phosanis_nightmare": 200, "yama": 150, "sarachnis": 90,
-        "duke_sucellus": 100, "the_leviathan": 120, "the_whisperer": 120, "vardorvis": 150,
-        "mimic": 75, "hespori": 100, "skotizo": 120,
-        "grotesque_guardians": 100, "abyssal_sire": 100, "kraken": 80, "cerberus": 120,
-        "araxxor": 150, "thermonuclear": 200, "alchemical_hydra": 175,
-        "crystalline_hunleff": 50, "corrupted_hunleff": 75, "tztok_jad": 100, "tzkal_zuk": 150,
-        "sol_heredit": 125, "tempoross": 50, "wintertodt": 50, "zalcano": 75,
-        # Raids
-        "cox_normal": 75, "toa_normal": 75, "tob_normal": 75,
-        "cox_challenge_mode": 150, "toa_expert_300_450_inv": 100,
-        "toa_expert_450_plus_inv": 150, "tob_hard_mode": 175,
-    }
+# ===== Get player info =====
+async def get_player(discord_id):
+    async with aiosqlite.connect(DB_NAME) as db:
+        async with db.execute(
+            """SELECT rsn, wom_points, discord_points, donations, boss_kc_at_link 
+               FROM players WHERE discord_id=?""",
+            (discord_id,)
+        ) as cur:
+            row = await cur.fetchone()
+            if row:
+                return row  # rsn, wom_points, discord_points, donations, boss_kc_at_link
+            return None
 
-    merged_bosses = merge_duplicate_bosses(mapped.get("bosses", {}))
-    for boss, pts_per_kc in boss_points.items():
-        current_kc = merged_bosses.get(boss, 0)
-        start_kc = boss_kc_at_link.get(boss, 0)
-        kc_delta = max(0, current_kc - start_kc)
+# ===== Get totals =====
+async def get_total_points(discord_id):
+    player = await get_player(discord_id)
+    if player:
+        rsn, wom_points, discord_points, donations, _ = player
+        return wom_points + discord_points + donations
+    return 0
 
-        if boss.startswith("cox") or boss.startswith("toa") or boss.startswith("tob"):
-            points += (kc_delta // 10) * pts_per_kc
-        else:
-            points += (kc_delta // 100) * pts_per_kc
+# ===== Leaderboards =====
+async def get_leaderboard(limit=10):
+    async with aiosqlite.connect(DB_NAME) as db:
+        async with db.execute(
+            "SELECT rsn, wom_points + discord_points + donations as total FROM players ORDER BY total DESC LIMIT ?",
+            (limit,)
+        ) as cur:
+            return await cur.fetchall()
 
-    # === DIARIES ===
-    diaries = mapped.get("diaries", {})
-    if diaries.get("easy", 0) >= 1: points += 5
-    if diaries.get("medium", 0) >= 1: points += 10
-    if diaries.get("hard", 0) >= 1: points += 20
-    if diaries.get("elite", 0) >= 1: points += 40
-    if diaries.get("all_completed"): points += 50
-
-    # === ACHIEVEMENTS ===
-    achievements = mapped.get("achievements", {})
-    if achievements.get("quest_cape"): points += 75
-    if achievements.get("music_cape"): points += 25
-    if achievements.get("diary_cape"): points += 100
-    if achievements.get("max_cape"): points += 300
-    if achievements.get("infernal_cape"): points += 200
-
-    # === PETS ===
-    pets = mapped.get("pets", {})
-    points += pets.get("skilling", 0) * 25
-    points += pets.get("boss", 0) * 50
-    points += pets.get("raids", 0) * 75
-
-    return points
+async def get_donator_leaderboard(limit=10):
+    async with aiosqlite.connect(DB_NAME) as db:
+        async with db.execute(
+            "SELECT rsn, donations FROM players ORDER BY donations DESC LIMIT ?",
+            (limit,)
+        ) as cur:
+            return await cur.fetchall()
