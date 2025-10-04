@@ -117,17 +117,26 @@ async def ensure_roles_exist(guild: discord.Guild):
             await guild.create_role(name=name)
 
 async def assign_roles(member: discord.Member, ladder_name: str, prestige_list: list[str], donator_name: str):
+    # Remove old ladder roles
     ladder_names = [r[2] for r in RANKS]
     to_remove = [r for r in member.roles if r.name in ladder_names]
     if to_remove:
         await member.remove_roles(*to_remove)
+    # Add new ladder role
     ladder_role = discord.utils.get(member.guild.roles, name=ladder_name)
     if ladder_role and ladder_role not in member.roles:
         await member.add_roles(ladder_role)
+    # Add prestige roles
     for pname, _ in PRESTIGE_ROLES:
         role = discord.utils.get(member.guild.roles, name=pname)
         if role and pname in prestige_list and role not in member.roles:
             await member.add_roles(role)
+    # Remove old donator roles
+    donator_names = [r[2] for r in DONATOR_ROLES]
+    to_remove = [r for r in member.roles if r.name in donator_names]
+    if to_remove:
+        await member.remove_roles(*to_remove)
+    # Add new donator role
     if donator_name:
         role = discord.utils.get(member.guild.roles, name=donator_name)
         if role and role not in member.roles:
@@ -151,7 +160,7 @@ async def link(interaction: discord.Interaction, rsn: str):
 
     player = await database.get_player(discord_id)
     _, wom_points, discord_points, donations, _ = player
-    total_points = wom_points + discord_points + donations
+    total_points = wom_points + discord_points  # Note: donations not included in ladder points
 
     ladder_name = get_ladder_rank(total_points)
     prestige_awards = []
@@ -168,7 +177,7 @@ async def link(interaction: discord.Interaction, rsn: str):
     await assign_roles(interaction.user, ladder_name, prestige_awards, donator_name)
 
     await interaction.followup.send(f"✅ {interaction.user.mention} linked RSN **{rsn}**.\n"
-                                    f"Points: **{total_points}** • Rank: **{ladder_name}** • "
+                                    f"Ladder Points: **{total_points}** • Rank: **{ladder_name}** • "
                                     f"Prestige: {', '.join(prestige_awards) if prestige_awards else 'None'} • "
                                     f"Donator: {donator_name if donator_name else 'None'}")
 
@@ -188,7 +197,7 @@ async def update(interaction: discord.Interaction):
     mapped = await map_wise_to_schema(wise_json)
     wom_points_new = calculate_points(mapped, boss_kc_at_link)
     await database.update_points(discord_id, wom_points=wom_points_new)
-    total_points = wom_points_new + discord_points + donations
+    total_points = wom_points_new + discord_points  # Donations excluded from ladder
 
     ladder_name = get_ladder_rank(total_points)
     prestige_awards = []
@@ -205,48 +214,48 @@ async def update(interaction: discord.Interaction):
     await assign_roles(interaction.user, ladder_name, prestige_awards, donator_name)
 
     await interaction.response.send_message(
-        f"✅ Updated points: **{total_points}**, Rank: **{ladder_name}**, Donations: **{donations}**"
+        f"✅ Updated ladder points: **{total_points}**, Rank: **{ladder_name}**, Donations: **{donations}**"
     )
 
 # ===== Extra Commands =====
-@tree.command(name="addpoint", description="Voeg punten toe aan een speler (staff only)")
+@tree.command(name="addpoint", description="Add extra points to a player (staff only)")
 @app_commands.checks.has_permissions(administrator=True)
 async def addpoint(interaction: discord.Interaction, member: discord.Member, amount: int):
     discord_id = str(member.id)
     player = await database.get_player(discord_id)
     if not player:
-        return await interaction.response.send_message("❌ Deze speler heeft nog geen RSN gelinkt.")
+        return await interaction.response.send_message("❌ This player has not linked an RSN yet.")
     rsn, wom_points, discord_points, donations, _ = player
     new_points = discord_points + amount
     await database.update_points(discord_id, discord_points=new_points)
-    total = wom_points + new_points + donations
+    total = wom_points + new_points
     ladder_name = get_ladder_rank(total)
     donator_name = get_donator_rank(donations)
     await ensure_roles_exist(interaction.guild)
     await assign_roles(member, ladder_name, [], donator_name)
     await interaction.response.send_message(
-        f"✅ {amount} punten toegevoegd aan {member.mention}.\n"
-        f"Totaalpunten: **{total}** (WOM: {wom_points}, Extra: {new_points}, Donaties: {donations})"
+        f"✅ Added **{amount} points** to {member.mention}.\n"
+        f"Ladder Points Total: **{total}** (WOM: {wom_points}, Extra: {new_points})"
     )
 
-@tree.command(name="dono", description="Voeg donatie toe aan een speler (staff only)")
+@tree.command(name="dono", description="Add donation to a player (staff only)")
 @app_commands.checks.has_permissions(administrator=True)
 async def dono(interaction: discord.Interaction, member: discord.Member, amount: int):
     discord_id = str(member.id)
     player = await database.get_player(discord_id)
     if not player:
-        return await interaction.response.send_message("❌ Deze speler heeft nog geen RSN gelinkt.")
+        return await interaction.response.send_message("❌ This player has not linked an RSN yet.")
     rsn, wom_points, discord_points, donations, _ = player
     new_donations = donations + amount
     await database.update_points(discord_id, donations=new_donations)
-    total = wom_points + discord_points + new_donations
-    ladder_name = get_ladder_rank(total)
     donator_name = get_donator_rank(new_donations)
+    total_ladder = wom_points + discord_points
+    ladder_name = get_ladder_rank(total_ladder)
     await ensure_roles_exist(interaction.guild)
     await assign_roles(member, ladder_name, [], donator_name)
     await interaction.response.send_message(
-        f"💰 Donatie van {amount:,} gp toegevoegd aan {member.mention}.\n"
-        f"Totaal donaties: **{new_donations:,} gp** • Rank: **{ladder_name}** • Donator rank: **{donator_name or 'None'}**"
+        f"💰 Added donation of **{amount:,} gp** to {member.mention}.\n"
+        f"Total Donations: **{new_donations:,} gp** • Donator Rank: **{donator_name or 'None'}**"
     )
 
 # ===== Start Bot =====
@@ -254,7 +263,7 @@ async def dono(interaction: discord.Interaction, member: discord.Member, amount:
 async def on_ready():
     await database.init_db()
     await tree.sync()
-    print(f"✅ Bot online als {bot.user} en commands globally synced")
+    print(f"✅ Bot online as {bot.user} and commands globally synced")
 
 if not DISCORD_TOKEN:
     print("ERROR: DISCORD_TOKEN env var not set.")
