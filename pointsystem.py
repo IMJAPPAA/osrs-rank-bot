@@ -10,42 +10,43 @@ def merge_duplicate_bosses(bosses: dict) -> dict:
         merged.pop("venenatis", None)
     return merged
 
-def calculate_points(mapped: dict, boss_kc_at_link: dict | None = None, full: bool = False) -> int:
+def calculate_points(mapped: dict, baseline: dict | None = None) -> int:
     """
-    Calculate points for a player.
-    
-    Args:
-        mapped: Mapped player data from Wise Old Man API.
-        boss_kc_at_link: Baseline boss killcounts for delta calculation.
-        full: If True, calculate full points ignoring baseline (used for /link).
-              If False, calculate delta points since baseline (used for /update).
+    Calculate points gained since baseline.
+    If baseline is None, calculates all points from scratch.
     """
+    baseline = baseline or {}
     points = 0
-    boss_kc_at_link = boss_kc_at_link or {}
 
-    # SKILLS
+    # --- Skills ---
     skills = mapped.get("skills", {})
+    base_skills = baseline.get("skills", {})
+
     total_level = skills.get("total_level", 0)
-    combat_level = skills.get("combat_level", 0)
-    if total_level < 1000:
-        points += 25
-    elif total_level < 1500:
-        points += 30
-    elif total_level < 1750:
-        points += 35
-    elif total_level < 2000:
-        points += 40
-    elif total_level < 2200:
-        points += 45
-    else:
-        points += 50
-    if skills.get("first_99"):
-        points += 50
-    points += skills.get("extra_99s", 0) * 25
-    if total_level >= 2277:
+    base_total_level = base_skills.get("total_level", 0)
+
+    # Base total_level points (delta only)
+    total_level_points = 0
+    if total_level > base_total_level:
+        tl_delta = total_level - base_total_level
+        if tl_delta > 0:
+            thresholds = [(0,1000,25),(1000,1500,30),(1500,1750,35),(1750,2000,40),(2000,2200,45),(2200,float("inf"),50)]
+            for lower, upper, pts in thresholds:
+                if base_total_level < upper and total_level > lower:
+                    total_level_points = pts
+    points += total_level_points
+
+    # 99s
+    ninetynines = sum(1 for lvl in skills.values() if isinstance(lvl, int) and lvl >= 99)
+    base_ninetynines = sum(1 for lvl in base_skills.values() if isinstance(lvl, int) and lvl >= 99)
+    first_99 = ninetynines >= 1 and base_ninetynines < 1
+    extra_99s = max(0, ninetynines - 1) - max(0, base_ninetynines - 1)
+    if first_99: points += 50
+    points += max(0, extra_99s) * 25
+    if total_level >= 2277 and base_total_level < 2277:
         points += 200
 
-    # BOSSES & RAIDS
+    # --- Bosses & Raids ---
     boss_points = {
         "barrows_chests": 50, "scurrius": 50, "giant_mole": 50, "deranged_archaeologist": 50,
         "moons_of_peril": 75, "kalphite_queen": 100, "the_hueycoatl": 150,
@@ -66,36 +67,40 @@ def calculate_points(mapped: dict, boss_kc_at_link: dict | None = None, full: bo
         "cox_challenge_mode": 150, "toa_expert_300_450_inv": 100,
         "toa_expert_450_plus_inv": 150, "tob_hard_mode": 175,
     }
+
     merged_bosses = merge_duplicate_bosses(mapped.get("bosses", {}))
+    base_bosses = merge_duplicate_bosses(baseline.get("bosses", {}))
+
     for boss, pts_per_kc in boss_points.items():
         current_kc = merged_bosses.get(boss, 0)
-        start_kc = boss_kc_at_link.get(boss, 0) if not full else 0
+        start_kc = base_bosses.get(boss, 0)
         kc_delta = max(0, current_kc - start_kc)
         if boss.startswith("cox") or boss.startswith("toa") or boss.startswith("tob"):
             points += (kc_delta // 10) * pts_per_kc
         else:
             points += (kc_delta // 100) * pts_per_kc
 
-    # DIARIES
+    # --- Diaries ---
     diaries = mapped.get("diaries", {})
-    if diaries.get("easy", 0) >= 1: points += 5
-    if diaries.get("medium", 0) >= 1: points += 10
-    if diaries.get("hard", 0) >= 1: points += 20
-    if diaries.get("elite", 0) >= 1: points += 40
-    if diaries.get("all_completed"): points += 50
+    base_diaries = baseline.get("diaries", {})
+    if diaries.get("easy", 0) > base_diaries.get("easy", 0): points += 5
+    if diaries.get("medium", 0) > base_diaries.get("medium", 0): points += 10
+    if diaries.get("hard", 0) > base_diaries.get("hard", 0): points += 20
+    if diaries.get("elite", 0) > base_diaries.get("elite", 0): points += 40
+    if diaries.get("all_completed", False) and not base_diaries.get("all_completed", False): points += 50
 
-    # ACHIEVEMENTS
+    # --- Achievements ---
     ach = mapped.get("achievements", {})
-    if ach.get("quest_cape"): points += 75
-    if ach.get("music_cape"): points += 25
-    if ach.get("diary_cape"): points += 100
-    if ach.get("max_cape"): points += 300
-    if ach.get("infernal_cape"): points += 200
+    base_ach = baseline.get("achievements", {})
+    for ach_key, pts in [("quest_cape",75),("music_cape",25),("diary_cape",100),("max_cape",300),("infernal_cape",200)]:
+        if ach.get(ach_key, False) and not base_ach.get(ach_key, False):
+            points += pts
 
-    # PETS
+    # --- Pets ---
     pets = mapped.get("pets", {})
-    points += pets.get("skilling", 0) * 25
-    points += pets.get("boss", 0) * 50
-    points += pets.get("raids", 0) * 75
+    base_pets = baseline.get("pets", {})
+    for pet_type, pts_per in [("skilling",25),("boss",50),("raids",75)]:
+        delta = max(0, pets.get(pet_type,0) - base_pets.get(pet_type,0))
+        points += delta * pts_per
 
     return points
