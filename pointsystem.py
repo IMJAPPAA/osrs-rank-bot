@@ -10,7 +10,16 @@ def merge_duplicate_bosses(bosses: dict) -> dict:
         merged.pop("venenatis", None)
     return merged
 
-def calculate_points(mapped: dict, boss_kc_at_link: dict | None = None) -> int:
+def calculate_points(mapped: dict, boss_kc_at_link: dict | None = None, full: bool = False) -> int:
+    """
+    Calculate points for a player.
+    
+    Args:
+        mapped: Mapped player data from Wise Old Man API.
+        boss_kc_at_link: Baseline boss killcounts for delta calculation.
+        full: If True, calculate full points ignoring baseline (used for /link).
+              If False, calculate delta points since baseline (used for /update).
+    """
     points = 0
     boss_kc_at_link = boss_kc_at_link or {}
 
@@ -60,7 +69,7 @@ def calculate_points(mapped: dict, boss_kc_at_link: dict | None = None) -> int:
     merged_bosses = merge_duplicate_bosses(mapped.get("bosses", {}))
     for boss, pts_per_kc in boss_points.items():
         current_kc = merged_bosses.get(boss, 0)
-        start_kc = boss_kc_at_link.get(boss, 0)
+        start_kc = boss_kc_at_link.get(boss, 0) if not full else 0
         kc_delta = max(0, current_kc - start_kc)
         if boss.startswith("cox") or boss.startswith("toa") or boss.startswith("tob"):
             points += (kc_delta // 10) * pts_per_kc
