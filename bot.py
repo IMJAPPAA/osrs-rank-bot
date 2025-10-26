@@ -160,7 +160,7 @@ async def link(interaction: discord.Interaction, rsn: str):
 
     player = await database.get_player(discord_id)
     _, wom_points, discord_points, donations, _ = player
-    total_points = wom_points + discord_points  # Note: donations not included in ladder points
+    total_points = wom_points + discord_points
 
     ladder_name = get_ladder_rank(total_points)
     prestige_awards = []
@@ -196,8 +196,15 @@ async def update(interaction: discord.Interaction):
 
     mapped = await map_wise_to_schema(wise_json)
     wom_points_new = calculate_points(mapped, boss_kc_at_link)
-    await database.update_points(discord_id, wom_points=wom_points_new)
-    total_points = wom_points_new + discord_points  # Donations excluded from ladder
+
+    # ✅ FIX: Update WOM points and new KC baseline
+    await database.update_points(
+        discord_id,
+        wom_points=wom_points_new,
+        boss_kc_at_link=json.dumps(mapped.get("bosses", {}))
+    )
+
+    total_points = wom_points_new + discord_points
 
     ladder_name = get_ladder_rank(total_points)
     prestige_awards = []
