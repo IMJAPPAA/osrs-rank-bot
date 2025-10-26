@@ -147,16 +147,15 @@ async def link(interaction: discord.Interaction, rsn: str):
     # Full points on first link
     wom_points = calculate_points(mapped, {})
 
-    # Store current baseline for future updates
-    baseline_snapshot = json.dumps(mapped)
+    # Store current boss KC baseline for future updates
+    boss_kc_snapshot = json.dumps(mapped.get("bosses", {}))
 
-    await database.link_player(discord_id, rsn, baseline_snapshot)
+    await database.link_player(discord_id, rsn, boss_kc_snapshot)
     await database.update_points(discord_id, wom_points=wom_points)
 
     total_points = wom_points
     ladder_name = get_ladder_rank(total_points)
 
-    # Prestige awards
     prestige_awards = []
     a, s = mapped.get("achievements", {}), mapped.get("skills", {})
     if a.get("quest_cape"): prestige_awards.append("Quester")
@@ -170,44 +169,43 @@ async def link(interaction: discord.Interaction, rsn: str):
     await ensure_roles_exist(interaction.guild)
     await assign_roles(interaction.user, ladder_name, prestige_awards, donator_name)
 
-    await interaction.followup.send(
-        f"✅ {interaction.user.mention} linked RSN **{rsn}**.\n"
-        f"Ladder Points: **{total_points}** • Rank: **{ladder_name}** • "
-        f"Prestige: {', '.join(prestige_awards) if prestige_awards else 'None'} • "
-        f"Donator: {donator_name if donator_name else 'None'}"
-    )
+    await interaction.followup.send(f"✅ {interaction.user.mention} linked RSN **{rsn}**.\n"
+                                    f"Ladder Points: **{total_points}** • Rank: **{ladder_name}** • "
+                                    f"Prestige: {', '.join(prestige_awards) if prestige_awards else 'None'} • "
+                                    f"Donator: {donator_name if donator_name else 'None'}")
 
-@tree.command(name="update", description="Update your points (must provide RSN)")
+@tree.command(name="update", description="Update your points")
 async def update(interaction: discord.Interaction, rsn: str):
     await interaction.response.defer(thinking=True)
     discord_id = str(interaction.user.id)
+
     player = await database.get_player(discord_id)
     if not player:
         return await interaction.followup.send("❌ You have not linked your RSN yet.")
 
-    linked_rsn, wom_points_old, discord_points, donations, baseline_json = player
-    if linked_rsn.lower() != rsn.lower():
-        return await interaction.followup.send("❌ The RSN you provided does not match your linked account.")
+    linked_rsn, wom_points_old, discord_points, donations, boss_kc_json = player
+    if rsn.lower() != linked_rsn.lower():
+        return await interaction.followup.send("❌ The RSN you provided does not match the linked account.")
 
-    baseline = json.loads(baseline_json or "{}")
+    boss_kc_at_link = json.loads(boss_kc_json or "{}")
+
     wise_json = await fetch_wise_player(rsn)
     if not wise_json:
         return await interaction.followup.send(f"❌ Could not fetch RSN `{rsn}`.")
 
     mapped = await map_wise_to_schema(wise_json)
-    wom_points_new = calculate_points(mapped, baseline)
+    wom_points_new = calculate_points(mapped, boss_kc_at_link)
 
-    # Update WOM points and new baseline
+    # Update WOM points and new KC baseline
     await database.update_points(
         discord_id,
-        wom_points=wom_points_old + wom_points_new,
-        baseline=json.dumps(mapped)
+        wom_points=wom_points_new,
+        boss_kc_at_link=json.dumps(mapped.get("bosses", {}))
     )
 
-    total_points = wom_points_old + wom_points_new + discord_points
+    total_points = wom_points_new + discord_points
     ladder_name = get_ladder_rank(total_points)
 
-    # Prestige
     prestige_awards = []
     a, s = mapped.get("achievements", {}), mapped.get("skills", {})
     if a.get("quest_cape"): prestige_awards.append("Quester")
@@ -222,7 +220,7 @@ async def update(interaction: discord.Interaction, rsn: str):
     await assign_roles(interaction.user, ladder_name, prestige_awards, donator_name)
 
     await interaction.followup.send(
-        f"✅ Updated points: **{total_points}** (New WOM: {wom_points_new}) • Rank: **{ladder_name}** • Donator: **{donator_name or 'None'}**"
+        f"✅ Updated ladder points: **{total_points}**, Rank: **{ladder_name}**, Donations: **{donations}**"
     )
 
 # ===== Extra Commands =====
@@ -233,7 +231,7 @@ async def addpoint(interaction: discord.Interaction, member: discord.Member, amo
     player = await database.get_player(discord_id)
     if not player:
         return await interaction.response.send_message("❌ This player has not linked an RSN yet.")
-    rsn, wom_points, discord_points, donations, baseline_json = player
+    rsn, wom_points, discord_points, donations, _ = player
     new_points = discord_points + amount
     await database.update_points(discord_id, discord_points=new_points)
     total = wom_points + new_points
@@ -253,7 +251,7 @@ async def dono(interaction: discord.Interaction, member: discord.Member, amount:
     player = await database.get_player(discord_id)
     if not player:
         return await interaction.response.send_message("❌ This player has not linked an RSN yet.")
-    rsn, wom_points, discord_points, donations, baseline_json = player
+    rsn, wom_points, discord_points, donations, _ = player
     new_donations = donations + amount
     await database.update_points(discord_id, donations=new_donations)
     donator_name = get_donator_rank(new_donations)
