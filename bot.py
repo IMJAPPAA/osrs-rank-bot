@@ -166,7 +166,7 @@ async def link(interaction: discord.Interaction, rsn: str):
     except Exception as e:
         await interaction.followup.send(f"❌ Something went wrong: `{e}`")
 
-# ===== Update command =====
+
 @tree.command(name="update", description="Update your points")
 async def update(interaction: discord.Interaction):
     await interaction.response.defer(thinking=True)
@@ -186,12 +186,10 @@ async def update(interaction: discord.Interaction):
         mapped = await map_wise_to_schema(wise_json)
         wom_points_new = calculate_points(mapped, boss_kc_at_link)
 
-        # Only add delta points
         delta_points = wom_points_new - wom_points_old
         if delta_points < 0:
             delta_points = 0  # Prevent losing points
 
-        # Update WOM points and new KC baseline
         await database.update_points(
             discord_id,
             wom_points=wom_points_old + delta_points,
@@ -220,6 +218,56 @@ async def update(interaction: discord.Interaction):
 
     except Exception as e:
         await interaction.followup.send(f"❌ Something went wrong: `{e}`")
+
+
+# ===== Extra Commands =====
+@tree.command(name="addpoint", description="Add extra points to a player (staff only)")
+@app_commands.checks.has_permissions(administrator=True)
+async def addpoint(interaction: discord.Interaction, member: discord.Member, amount: int):
+    discord_id = str(member.id)
+    player = await database.get_player(discord_id)
+    if not player:
+        return await interaction.response.send_message("❌ This player has not linked an RSN yet.")
+    
+    rsn, wom_points, discord_points, donations, _ = player
+    new_points = discord_points + amount
+    await database.update_points(discord_id, discord_points=new_points)
+    
+    total = wom_points + new_points
+    ladder_name = get_ladder_rank(total)
+    donator_name = get_donator_rank(donations)
+    await ensure_roles_exist(interaction.guild)
+    await assign_roles(member, ladder_name, [], donator_name)
+    
+    await interaction.response.send_message(
+        f"✅ Added **{amount} points** to {member.mention}.\n"
+        f"Ladder Points Total: **{total}** (WOM: {wom_points}, Extra: {new_points})"
+    )
+
+
+@tree.command(name="dono", description="Add donation to a player (staff only)")
+@app_commands.checks.has_permissions(administrator=True)
+async def dono(interaction: discord.Interaction, member: discord.Member, amount: int):
+    discord_id = str(member.id)
+    player = await database.get_player(discord_id)
+    if not player:
+        return await interaction.response.send_message("❌ This player has not linked an RSN yet.")
+    
+    rsn, wom_points, discord_points, donations, _ = player
+    new_donations = donations + amount
+    await database.update_points(discord_id, donations=new_donations)
+    
+    donator_name = get_donator_rank(new_donations)
+    total_ladder = wom_points + discord_points
+    ladder_name = get_ladder_rank(total_ladder)
+    await ensure_roles_exist(interaction.guild)
+    await assign_roles(member, ladder_name, [], donator_name)
+    
+    await interaction.response.send_message(
+        f"💰 Added donation of **{amount:,} gp** to {member.mention}.\n"
+        f"Total Donations: **{new_donations:,} gp** • Donator Rank: **{donator_name or 'None'}**"
+    )
+
 
 # ===== Start Bot =====
 @bot.event
